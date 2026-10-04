@@ -1,14 +1,22 @@
 {
-  "commit": "f5ac728811315eb71511a51748a965c809518526",
+  "commit": "d7050618eca4d734fae370ced70c56fcc7110669",
   "digest": "",
-  "generation": 1,
-  "history": [],
+  "generation": 2,
+  "history": [
+    {
+      "commit": "f5ac728811315eb71511a51748a965c809518526",
+      "digest": "",
+      "generation": 1,
+      "op": "7719729c53c8a2fdaca31f60a9ab8e45",
+      "updated_at": "2026-10-04T17:49:03Z"
+    }
+  ],
   "mirrored": false,
-  "op": "7719729c53c8a2fdaca31f60a9ab8e45",
-  "pending": "ce2dfea4d6fb9bd310f309c00fb5c14c",
+  "op": "ce2dfea4d6fb9bd310f309c00fb5c14c",
+  "pending": "",
   "ref": "lkgr",
   "repo": "innernet",
   "rolled_back": [],
   "schema": "qq-pointer/1",
-  "updated_at": "2026-10-04T17:49:03Z"
+  "updated_at": "2026-10-04T20:47:21Z"
 }
