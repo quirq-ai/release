@@ -22,7 +22,11 @@ from qqrelease.errors import ReleaseError
 from qqrelease.operations import Operation, Pointer
 from qqrelease.store import Store
 
-DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+# channels.json is read by the installer, which refuses the whole file on one bad entry, so every
+# value written must pass the same rules (installer's qqinstall.manifest NAME, COMMIT, DIGEST).
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+COMMIT = re.compile(r"[0-9a-f]{40}")
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 MANIFEST = "channels.json"
 MANIFEST_SCHEMA = "qq-channels/1"
 
@@ -39,6 +43,10 @@ def channel_cfg(cfg: dict, name: str) -> dict:
 
 
 def check_repo(cfg: dict, repo: str, channel: str) -> None:
+    for what, name in (("repo", repo), ("channel", channel)):
+        if not NAME.fullmatch(name):
+            raise ReleaseError(f"{what} name {name!r} is not one the installer accepts "
+                               "([A-Za-z0-9][A-Za-z0-9._-]{0,99})")
     for r in cfg.get("repos", {}).get("repo", []):
         if r.get("name") == repo:
             if channel not in r.get("channels", []):
@@ -78,7 +86,9 @@ def plan_promote(cfg: dict, store: Store, repo: str, channel: str, commit: str, 
                  reason: str = "", actor: str = "local") -> Operation:
     check_repo(cfg, repo, channel)
     check_automatic(cfg, channel)
-    if not DIGEST.match(digest):
+    if not COMMIT.fullmatch(commit):
+        raise ReleaseError(f"commit {commit!r} is not a 40-character lowercase hex SHA")
+    if not DIGEST.fullmatch(digest):
         raise ReleaseError(f"digest {digest!r} is not sha256:<64 hex>; a channel names an artifact, "
                            "not just a commit")
     src = source_ref(cfg, channel)
@@ -139,6 +149,10 @@ def plan_rollback(cfg: dict, store: Store, repo: str, channel: str, reason: str 
     prev = rollback_target(cur)
     if prev is None:
         raise ReleaseError(f"{repo} {channel} has no previous value to roll back to")
+    if not COMMIT.fullmatch(str(prev["commit"])) or not DIGEST.fullmatch(str(prev["digest"])):
+        # Checked before the ref moves, not after: history written before these rules existed.
+        raise ReleaseError(f"{repo} {channel}'s previous value {prev['commit']!r} {prev['digest']!r} is "
+                           "one the installer refuses; not rolling back to it")
     return executor.plan(store, "rollback", repo, ref_of(channel), prev["commit"], digest=prev["digest"],
                          reason=reason or f"roll {channel} back from {cur.commit[:12]} to {prev['commit'][:12]}",
                          actor=actor)
@@ -172,5 +186,20 @@ def manifest(store: Store, new: Pointer | None = None) -> dict:
     return {"schema": MANIFEST_SCHEMA, "repos": repos}
 
 
+def check_manifest(doc: dict) -> None:
+    """Refuse to publish what the installer would refuse: one bad entry blinds every channel."""
+    for repo, chans in doc["repos"].items():
+        for name, e in chans.items():
+            where = f"channels.json {repo} {name}"
+            if not NAME.fullmatch(repo) or not NAME.fullmatch(name):
+                raise ReleaseError(f"{where}: a name the installer refuses")
+            if not COMMIT.fullmatch(str(e["commit"])) or not DIGEST.fullmatch(str(e["digest"])):
+                raise ReleaseError(f"{where}: commit {e['commit']!r} or digest {e['digest']!r} the installer refuses")
+            if not isinstance(e["generation"], int) or isinstance(e["generation"], bool) or e["generation"] < 1:
+                raise ReleaseError(f"{where}: generation {e['generation']!r} the installer refuses")
+
+
 def manifest_json(store: Store, new: Pointer | None = None) -> str:
-    return json.dumps(manifest(store, new), sort_keys=True, indent=2) + "\n"
+    doc = manifest(store, new)
+    check_manifest(doc)
+    return json.dumps(doc, sort_keys=True, indent=2) + "\n"
