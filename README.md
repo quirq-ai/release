@@ -155,8 +155,8 @@ canary demo checks a report exists for every day and that the bad day's says hel
 |---|---|---|---|
 | V0-REL-01 | `lkgr` ref | #2 | merged |
 | V0-REL-02 | Channel pointers and rollback | #3 | merged |
-| V0-REL-03 | Daily canary pipeline v0 | #4 | in review |
-| V0-REL-04 | Daily canary report | #5 | in review |
+| V0-REL-03 | Daily canary pipeline v0 | #4 | merged |
+| V0-REL-04 | Daily canary report | #6 | in review |
 
 Out of scope for v0: soak, automatic rollback, the fuzz stage, the dev channel and PostHog (v1);
 stable and staged rollout (v2).
