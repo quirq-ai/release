@@ -100,11 +100,13 @@ class Store:
             # touched none of our files (a compare-and-swap per file; a textual merge could combine
             # two records that each made sense alone into one that does not).
             self._git("fetch", "-q", "origin", f"refs/heads/{self.branch}")
+            if self._git("merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD", check=False).returncode == 0:
+                return          # our push landed although the client saw a failure
             base = self._git("rev-parse", "-q", "--verify", "HEAD~1^{commit}", check=False).stdout.strip()
             if not base:      # our commit is the branch's first: compare with the empty tree
                 base = self._git("hash-object", "-t", "tree", "/dev/null").stdout.strip()
-            ours = set(self._git("diff", "--name-only", base, "HEAD").stdout.split())
-            theirs = set(self._git("diff", "--name-only", base, "FETCH_HEAD").stdout.split())
+            ours = self._changed(base, "HEAD")
+            theirs = self._changed(base, "FETCH_HEAD")
             if ours & theirs:
                 raise ReleaseError(f"could not publish to {self.branch}: another writer changed "
                                    f"{', '.join(sorted(ours & theirs))} meanwhile (a conflict); run again")
@@ -113,6 +115,10 @@ class Store:
                 raise ReleaseError(f"could not publish to {self.branch}: rebasing onto another writer's "
                                    f"change conflicted: {r.stderr.strip()}")
         raise ReleaseError(f"could not publish to {self.branch} after {attempts} attempts: {err}")
+
+    def _changed(self, a: str, b: str) -> set[str]:
+        out = self._git("-c", "core.quotePath=false", "diff", "--name-only", "-z", "--no-renames", a, b).stdout
+        return {p for p in out.split("\0") if p}
 
     def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         p = subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True)

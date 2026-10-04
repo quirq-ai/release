@@ -453,9 +453,11 @@ def _stage_rows(stages: dict | None, sel: "Selection") -> list[dict]:
     if not isinstance(stages, dict) or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
         return []
     rows = stages.get("stages")
-    out = []
+    out, seen = [], set()
     for r in rows if isinstance(rows, list) else []:
-        if isinstance(r, dict) and r.get("name") in STAGES:
+        # One row per known stage, the first: the count is bounded however many rows the worker wrote.
+        if isinstance(r, dict) and r.get("name") in STAGES and r["name"] not in seen:
+            seen.add(r["name"])
             try:
                 seconds = round(float(r.get("seconds", 0)), 1)
                 seconds = seconds if math.isfinite(seconds) else 0.0
@@ -474,6 +476,9 @@ def verdict(stages: dict | None, sel: Selection) -> tuple[str, str]:
     if stages.get("skip"):
         return "skip", _clip(stages["skip"])
     got = [s for s in (stages.get("stages") or []) if isinstance(s, dict)]
+    known = [s.get("name") for s in got if s.get("name") in STAGES]
+    if len(known) != len(set(known)):
+        return "missing", "the stage results name a stage more than once"
     for s in got:
         if s.get("name") in STAGES and s.get("ok") is False:
             if s.get("ran") is False:   # tooling, not the commit: a pipeline error, never a hold
@@ -581,9 +586,9 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
         # or error, and a hold always goes on top, so the report never hides it.
         prior = json.loads(path.read_text())
         if prior.get("outcome") in TERMINAL and run.outcome != "held":
-            doc = {**prior, "later": prior.get("later", []) + [doc]}
+            doc = {**prior, "later": (prior.get("later", []) + [doc])[-RUN_IDS_KEPT:]}
         else:
-            earlier = prior.pop("earlier", []) + [{k: v for k, v in prior.items() if k != "later"}]
+            earlier = (prior.pop("earlier", []) + [{k: v for k, v in prior.items() if k != "later"}])[-RUN_IDS_KEPT:]
             doc = {**doc, "earlier": earlier}
     files[path] = json.dumps(doc, sort_keys=True, indent=2) + "\n"
     store.save(files, f"canary {sel.repo} {date}: {run.outcome} {sel.commit[:12]}")

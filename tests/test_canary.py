@@ -516,6 +516,18 @@ def test_worker_text_is_clipped_before_it_reaches_a_record(world):
     assert canary.run_path(store, repo, "2026-10-05").stat().st_size < 50000
 
 
+def test_the_number_of_stage_rows_is_bounded(world):
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    many = {"repo": repo, "commit": shas[1], "digest": "sha256:" + "a" * 64,
+            "stages": [{"name": "build", "ok": False, "detail": "z" * 30000}] * 500}
+    assert canary.verdict(many, canary.select(cfg, store, repo))[0] == "missing"
+    for i in range(canary.ERROR_LIMIT):
+        run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), many, "2026-10-05")
+    assert run.outcome == "held" and len(run.stages) == 1
+    assert canary.run_path(store, repo, "2026-10-05").stat().st_size < 200000
+
+
 def test_a_hold_record_from_before_releases_still_holds(world):
     cfg, store, mirror, repo, shas = world
     lkgr_to(store, mirror, repo, shas[1])
