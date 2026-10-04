@@ -83,6 +83,18 @@ def test_ship_promotes_and_records(world):
     assert rec["schema"] == "qq-canary-run/1" and rec["stages"][-1]["name"] == "promote"
 
 
+def test_a_commit_canary_was_rolled_back_from_is_not_rebuilt(world):
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), passed(repo, shas[1]), "2026-10-05")
+    lkgr_to(store, mirror, repo, shas[2])
+    canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), passed(repo, shas[2]), "2026-10-06")
+    channels.apply(store, mirror, channels.plan_rollback(cfg, store, repo, "canary", "bad in use"))
+    assert store.pointer(repo, "channels/canary").commit == shas[1]
+    sel = canary.select(cfg, store, repo)                                    # lkgr still names shas[2]
+    assert sel.action == "noop" and "rolled back" in sel.reason
+
+
 def test_a_failed_stage_holds_and_keeps_the_previous_canary(world):
     cfg, store, mirror, repo, shas = world
     lkgr_to(store, mirror, repo, shas[1])

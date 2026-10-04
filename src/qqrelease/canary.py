@@ -127,6 +127,10 @@ def select(cfg: dict, store: Store, repo: str) -> Selection:
     if held_path(store, repo, lkgr.commit).is_file():
         return Selection(repo, "noop", lkgr.commit, canary.commit,
                          f"lkgr names {lkgr.commit[:12]}, which an earlier canary held; waiting for lkgr to move")
+    if any(b.get("commit") == lkgr.commit for b in canary.rolled_back):
+        return Selection(repo, "noop", lkgr.commit, canary.commit,
+                         f"lkgr names {lkgr.commit[:12]}, which canary was rolled back from; waiting for "
+                         "lkgr to move")
     return Selection(repo, "build", lkgr.commit, canary.commit, f"lkgr {lkgr.commit[:12]} is new")
 
 
