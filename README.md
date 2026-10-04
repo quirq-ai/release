@@ -196,8 +196,43 @@ canary demo checks a report exists for every day and that the bad day's says hel
 | V0-REL-03 | Daily canary pipeline v0 | #4 | merged |
 | V0-REL-04 | Daily canary report | #6 | merged |
 
+Audit fixes after v0: B1 (#8), S1-S3 (#9), S4 (#10), S5-S6 (#11), S7-S8 (#12); audits cleared at
+`71a987f`.
+
 Out of scope for v0: soak, automatic rollback, the fuzz stage, the dev channel and PostHog (v1);
 stable and staged rollout (v2).
+
+### Open for v1 (non-blocking findings from the v0 audits and reviews)
+
+Waiting on the release executor identity and the `release-state` ruleset (suraj, with the post-v0
+bots design):
+
+- The release chain is a consistency check, not authentication, and `is_held` trusts `state` alone.
+- A rebase after an admin force-push of `release-state` could replay commits the rewind removed; the
+  ruleset's no-force-push rule closes it.
+
+The state store:
+
+- A push refused for a reason other than a race is retried 4 times, and the error never says why.
+- `_reset_to_branch` falls back to `HEAD~1` when the fetch fails: silent on a root commit, and a
+  publish that landed is then reported as failed (the safe side).
+- `save` writes files before `git add`/`commit`, outside the reset; a failure there leaves the
+  worktree dirty for later reads in the same process.
+- The compare-and-swap covers writes only: an input a writer only reads (the error count's
+  generation, from the hold record) can be stale. Harmless today.
+- A non-UTF-8 path from another writer refuses racing publishes within the race window.
+
+The canary:
+
+- The `finish` fallback with no stage results, after a promote that landed, records `error` and
+  counts it; nothing ships, but the day reads error instead of shipped.
+- A promote bug that fails every run turns the job red daily with no cap or escalation.
+- A forged `skip` gives an uncounted daily no-op (the accepted worker-trust model), and every repo's
+  stage results share one artifact namespace within a run.
+- About a day of runner outage holds every canary repo as a possible runner fault (documented above).
+- A release reason keeps non-whitespace control characters.
+- Held and report issue bodies can exceed GitHub's 65,536-character limit.
+- The `earlier`/`later` cap reuses `RUN_IDS_KEPT`; give it its own constant.
 
 ## Working here
 
