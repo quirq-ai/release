@@ -9,7 +9,7 @@ place of GitHub) and checks:
 - the target repo's `lkgr` ref and the state store agree;
 - lkgr names only a commit that is green on every builder at that tick.
 
-    python tools/lkgr_demo.py --config .qq/infra-config
+    tools/lkgr_demo.py --config .qq/infra-config
 """
 from __future__ import annotations
 

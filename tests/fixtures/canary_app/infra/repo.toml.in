@@ -1,4 +1,4 @@
-# The canary fixture's manifest. tools/canary_demo.py fills in the Python it runs on.
+# The canary fixture's manifest. tests/canary_demo.py fills in the Python it runs on.
 schema = "quirq-repo/1"
 
 [qq]

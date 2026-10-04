@@ -33,3 +33,4 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
+norecursedirs = ["fixtures"]   # the canary demo's fixture app has its own tests

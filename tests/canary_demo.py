@@ -1,7 +1,7 @@
 """V0-REL-03 done-when, offline: 7 daily canaries in a row with no human touch, and a planted bad
 canary is held.
 
-Builds a git repo from `tools/canary_fixture` (a small python-service with a property test) under
+Builds a git repo from `tests/fixtures/canary_app` (a small python-service with a property test) under
 the name of the first onboarded canary repo, then plays eight days. Each day one commit lands, lkgr
 moves to it through the executor, and the pipeline runs exactly as the `canary` workflow does:
 `qqrelease canary plan`, then `canary stages` on a checkout of the selected commit, then
@@ -13,7 +13,7 @@ canary: its /health answers 500, which a health.toml probe requires. Checks:
 - a ninth run with lkgr unmoved records a no-op instead of rebuilding;
 - every day has a run record (what the daily report reads).
 
-    python tools/canary_demo.py --config .qq/infra-config --toolchain python=ROOT
+    tests/canary_demo.py --config .qq/infra-config --toolchain python=ROOT
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from pathlib import Path
 from qqrelease import backends, canary, cli, config, executor
 from qqrelease.store import Store
 
-FIXTURE = Path(__file__).resolve().parent / "canary_fixture"
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "canary_app"
 DAYS = 8
 BAD_DAY = 4
 START = date(2026, 10, 5)

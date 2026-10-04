@@ -127,7 +127,7 @@ and an agent completes it in v1. Stage results go to the results store through t
 GitHub may drop a scheduled run, so `canary-watchdog` checks twice a day that every canary repo has
 today's run record and, if one is missing and no canary is in flight, starts `canary` by hand.
 
-`tools/canary_demo.py` plays eight days against a fixture service (`tools/canary_fixture`): seven
+`tests/canary_demo.py` plays eight days against a fixture service (`tests/fixtures/canary_app`): seven
 ship with no human touch, and a planted bad canary (its `/health` answers 500) is held at
 deploy-probe with the previous canary kept. Presubmit runs it.
 
