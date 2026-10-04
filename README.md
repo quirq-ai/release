@@ -138,8 +138,8 @@ builders make an lkgr (xo-space #211, innernet #37), each day's record is a no-o
 
 | Item | What | PR | State |
 |---|---|---|---|
-| V0-REL-01 | `lkgr` ref | #2 | in review |
-| V0-REL-02 | Channel pointers and rollback | #3 | in review |
+| V0-REL-01 | `lkgr` ref | #2 | merged |
+| V0-REL-02 | Channel pointers and rollback | #3 | merged |
 | V0-REL-03 | Daily canary pipeline v0 | #4 | in review |
 | V0-REL-04 | Daily canary report | | waits on V0-REL-03 |
 
