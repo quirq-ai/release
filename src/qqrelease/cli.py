@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,13 +22,6 @@ from qqrelease.store import Store
 GRACE_MINUTES = 15
 
 
-def _actor() -> str:
-    if os.environ.get("GITHUB_RUN_ID"):
-        return (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
-                f"{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
-    return "local"
-
-
 def _mirror(args, cfg: dict):
     name = config.backend_name(cfg, args.backend)
     slugs = {r.name: r.slug for r in config.repos(cfg)}
@@ -41,6 +33,29 @@ def _source(args, cfg: dict):
     if args.snapshot:
         return garden_backends.load("snapshot", path=args.snapshot)
     return garden_backends.load(config.backend_name(cfg, args.backend), cache=args.cache)
+
+
+def _lkgr_one(args, store, mirror, source, repo, ref, now) -> str:
+    commits = source.commits(repo, args.limit)
+    runs = []
+    for b in repo.postsubmit:
+        r, _note = source.runs(repo, b)
+        runs.extend(r)
+    if not args.dry_run:
+        executor.finish_pending(store, mirror, repo.name, ref, at=args.now)
+    cur = store.pointer(repo.name, ref)
+    d = lkgr.decide(repo.postsubmit, commits, runs, cur.commit, now, timedelta(minutes=GRACE_MINUTES))
+    mirror_note = ""
+    moving = d.action in ("advance", "retreat")
+    if moving and not args.dry_run:
+        op = executor.plan(store, d.action, repo.name, ref, d.commit, reason=d.reason, actor=mirror.actor())
+        op, _ = executor.move(store, mirror, op, at=args.now)
+        mirror_note = op.mirror
+    if d.action == "stuck":
+        print(f"::error::{repo.name}: {d.reason}", file=sys.stderr)
+    shown = d.commit[:12] if d.commit else "(none)"
+    dry = " (dry run)" if args.dry_run and moving else ""
+    return f"| {repo.name} | **{d.action}**{dry} | {shown} | {d.reason} | {mirror_note} |"
 
 
 def cmd_lkgr(args) -> int:
@@ -55,29 +70,24 @@ def cmd_lkgr(args) -> int:
     rc = 0
     for repo in repos:
         try:
-            commits = source.commits(repo, args.limit)
-            runs = []
-            for b in repo.postsubmit:
-                r, _note = source.runs(repo, b)
-                runs.extend(r)
-        except GardenerError as e:
-            raise ReleaseError(f"{repo.name}: {e}") from None
-        cur = store.pointer(repo.name, ref)
-        d = lkgr.decide(repo.postsubmit, commits, runs, cur.commit, now,
-                        timedelta(minutes=GRACE_MINUTES))
-        mirror_note = ""
-        if d.action in ("advance", "retreat") and not args.dry_run:
-            op = executor.plan(store, d.action, repo.name, ref, d.commit, reason=d.reason, actor=_actor())
-            op, _ = executor.move(store, mirror, op, at=args.now)
-            mirror_note = op.mirror
-        if d.action == "stuck":
-            rc = 1
-            print(f"::error::{repo.name}: {d.reason}", file=sys.stderr)
-        shown = d.commit[:12] if d.commit else "(none)"
-        lines.append(f"| {repo.name} | **{d.action}**{' (dry run)' if args.dry_run and d.action in ('advance', 'retreat') else ''} "
-                     f"| {shown} | {d.reason} | {mirror_note} |")
+            row = _lkgr_one(args, store, mirror, source, repo, ref, now)
+        except (ReleaseError, GardenerError) as e:
+            # One repo's trouble must not stop lkgr for the others.
+            rc = 2
+            print(f"::error::{repo.name}: {e}", file=sys.stderr)
+            row = f"| {repo.name} | **error** | | {e} | |"
+        if "**stuck**" in row:
+            rc = max(rc, 1)
+        lines.append(row)
     print("\n".join(lines))
     return rc
+
+
+def cmd_repos(args) -> int:
+    """Onboarded repos' names on the backend's host, comma-separated (for scoping a token)."""
+    cfg = config.load(Path(args.config))
+    print(",".join(r.slug.rpartition("/")[2] for r in config.repos(cfg) if r.slug))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,6 +111,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--limit", type=int, default=100, help="main commits to consider, newest first")
     s.add_argument("--dry-run", action="store_true", help="decide, but move nothing")
     s.set_defaults(func=cmd_lkgr)
+
+    s = sub.add_parser("repos", help="onboarded repo names, comma-separated")
+    s.add_argument("--config", required=True)
+    s.set_defaults(func=cmd_repos)
 
     args = p.parse_args(argv)
     try:

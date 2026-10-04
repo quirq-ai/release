@@ -6,9 +6,10 @@ rulesets). Its installation token comes from `QQ_RELEASE_TOKEN`. TODO(suraj): th
 identity (a GitHub App) does not exist yet; until it does, every write is skipped and says so, and
 the pointer still moves in the state store, which is the record readers use.
 
-The write compares before it swaps: if the ref is not at `old` (and not already at `new`), it
-refuses. The concurrency group serializes executor runs, so the gap between read and write has
-no other writer.
+The write compares before it swaps: if the ref is not at an expected value (and not already at
+`new`), it refuses. The REST API has no compare-and-swap of its own, so the read and the forced
+update are separate calls; what keeps anyone else out of the gap is gate's rulesets (only the
+executor may write these refs) and the workflows' concurrency groups (one executor at a time).
 """
 from __future__ import annotations
 
@@ -39,15 +40,22 @@ class Mirror:
         doc = self._request("GET", f"/repos/{self._slug(repo)}/git/ref/heads/{_quote(ref)}")
         return (doc or {}).get("object", {}).get("sha", "")
 
-    def write_ref(self, repo: str, ref: str, old: str, new: str) -> str:
+    def actor(self) -> str:
+        run = os.environ.get("GITHUB_RUN_ID", "")
+        if not run:
+            return "local"
+        return (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
+                f"{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{run}")
+
+    def write_ref(self, repo: str, ref: str, expected: list[str], new: str) -> str:
         if not self.token:
             return NO_IDENTITY
         cur = self.read_ref(repo, ref)
         if cur == new:
             return "already there"
-        if cur != old:
-            raise ReleaseError(f"{repo}: {ref} is at {cur[:12] or '(absent)'}, not {old[:12] or '(absent)'}; "
-                               "something other than the executor moved it")
+        if cur not in expected:
+            raise ReleaseError(f"{repo}: {ref} is at {cur[:12] or '(absent)'}, which the executor did not "
+                               "set; something else moved it")
         slug = self._slug(repo)
         if cur:
             self._request("PATCH", f"/repos/{slug}/git/refs/heads/{_quote(ref)}", {"sha": new, "force": True})

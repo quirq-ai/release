@@ -40,13 +40,14 @@ class Spy:
     def __init__(self, inner, store):
         self.inner, self.store, self.seen = inner, store, []
 
-    def write_ref(self, repo, ref, old, new):
+    def write_ref(self, repo, ref, expected, new):
         recorded = list((self.store.root / "ops").glob("*.json"))
         assert recorded, "the operation key must be recorded before the effect"
         committed = git("log", "--format=%s", cwd=self.store.root)
         assert "record " in committed, "the record must be committed before the effect"
-        self.seen.append((ref, old, new))
-        return self.inner.write_ref(repo, ref, old, new)
+        assert self.store.pointer(repo, ref).pending, "the pointer must say it waits on the operation"
+        self.seen.append((ref, tuple(expected), new))
+        return self.inner.write_ref(repo, ref, expected, new)
 
 
 def test_move_records_the_key_first_then_moves_the_ref(target, store):
@@ -95,10 +96,11 @@ def test_the_ref_moved_by_someone_else_fails_the_operation(target, store):
     root, shas = target
     git("update-ref", "refs/heads/lkgr", shas[0], cwd=root / "demo")   # not the executor
     op = executor.plan(store, "advance", "demo", "lkgr", shas[1])
-    with pytest.raises(ReleaseError, match="could not move"):
+    with pytest.raises(ReleaseError, match="something else moved it"):
         executor.move(store, load("local", target_root=root), op)
     assert store.op(op.key).state == "failed"
-    assert store.pointer("demo", "lkgr").commit == ""
+    ptr = store.pointer("demo", "lkgr")
+    assert ptr.commit == "" and ptr.pending == op.key
 
 
 def test_a_stale_plan_is_refused(target, store):
@@ -138,3 +140,75 @@ def test_store_names_cannot_escape(store):
 def test_unknown_backend_is_an_error():
     with pytest.raises(ReleaseError, match="no release backend"):
         load("nope")
+
+
+class Skip:
+    """No executor identity yet: the ref is never written."""
+    def write_ref(self, repo, ref, expected, new):
+        return "skipped: no release executor identity"
+
+
+def test_skipped_moves_then_an_identity_takes_over(target, store):
+    """Moves recorded while no identity existed must not wedge the first real write (the ref is
+    absent, not at the pointer's commit)."""
+    root, shas = target
+    for sha in shas[:2]:
+        executor.move(store, Skip(), executor.plan(store, "advance", "demo", "lkgr", sha))
+    assert store.pointer("demo", "lkgr").mirrored is False
+    op, ptr = executor.move(store, load("local", target_root=root),
+                            executor.plan(store, "advance", "demo", "lkgr", shas[2]))
+    assert op.mirror == "pushed" and ptr.mirrored
+    assert git("rev-parse", "refs/heads/lkgr", cwd=root / "demo") == shas[2]
+
+
+def test_a_mirrored_ref_must_be_where_the_pointer_is(target, store):
+    """Once the ref is known to match the pointer, an older value means someone else wrote it."""
+    root, shas = target
+    mirror = load("local", target_root=root)
+    executor.move(store, mirror, executor.plan(store, "advance", "demo", "lkgr", shas[1]))
+    git("update-ref", "refs/heads/lkgr", shas[0], cwd=root / "demo")
+    with pytest.raises(ReleaseError, match="something else moved it"):
+        executor.move(store, mirror, executor.plan(store, "advance", "demo", "lkgr", shas[2]))
+
+
+def test_a_crash_after_the_ref_moved_is_finished_before_moving_on(target, store):
+    """The ref moved to Y, the run died before recording it; meanwhile Z became the candidate. The
+    next run must first record Y, then move Y -> Z, never wedge on the CAS."""
+    root, shas = target
+    mirror = load("local", target_root=root)
+    executor.move(store, mirror, executor.plan(store, "advance", "demo", "lkgr", shas[0]))
+    op = executor.plan(store, "advance", "demo", "lkgr", shas[1])
+
+    class LandsThenDies:
+        def write_ref(self, *a):
+            mirror.write_ref(*a)
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        executor.move(store, LandsThenDies(), op)
+    assert store.pointer("demo", "lkgr").commit == shas[0]       # the store does not know yet
+    with pytest.raises(ReleaseError, match="finish it first"):
+        executor.move(store, mirror, executor.plan(store, "advance", "demo", "lkgr", shas[2]))
+    finished = executor.finish_pending(store, mirror, "demo", "lkgr")
+    assert finished.key == op.key and finished.state == "applied" and finished.mirror == "already there"
+    _, ptr = executor.move(store, mirror, executor.plan(store, "advance", "demo", "lkgr", shas[2]))
+    assert ptr.commit == shas[2] and not ptr.pending
+    assert git("rev-parse", "refs/heads/lkgr", cwd=root / "demo") == shas[2]
+
+
+def test_a_write_that_landed_but_reported_failure_is_finished(target, store):
+    """A timeout after the forge applied the update: the op is saved failed, the pointer pending."""
+    root, shas = target
+    mirror = load("local", target_root=root)
+    op = executor.plan(store, "advance", "demo", "lkgr", shas[1])
+
+    class Timeout:
+        def write_ref(self, *a):
+            mirror.write_ref(*a)
+            raise ReleaseError("timed out")
+
+    with pytest.raises(ReleaseError, match="timed out"):
+        executor.move(store, Timeout(), op)
+    assert store.op(op.key).state == "failed"
+    done = executor.finish_pending(store, mirror, "demo", "lkgr")
+    assert done.state == "applied" and store.pointer("demo", "lkgr").commit == shas[1]

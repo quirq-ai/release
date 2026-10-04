@@ -69,7 +69,7 @@ class Store:
         self._git("add", "--", *[str(p.relative_to(self.root)) for p in files])
         if self._git("diff", "--cached", "--quiet", check=False).returncode == 0:
             return
-        self._git("-c", "user.name=qq-release", "-c", "user.email=qq-release@users.noreply.github.com",
+        self._git("-c", "user.name=qq-release", "-c", "user.email=qq-release@quirq.invalid",
                   "commit", "-q", "-m", message)
         if self.push:
             p = self._git("push", "-q", "origin", f"HEAD:refs/heads/{self.branch}", check=False)

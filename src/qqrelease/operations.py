@@ -74,6 +74,8 @@ class Pointer:
     generation: int = 0
     op: str = ""              # key of the operation that set it
     updated_at: str = ""
+    pending: str = ""         # key of an operation recorded but not yet applied
+    mirrored: bool = False    # whether the target repo's git ref is known to name `commit`
     history: list[dict[str, Any]] = field(default_factory=list)
     schema: str = "qq-pointer/1"
 
@@ -90,9 +92,9 @@ class Pointer:
         names = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in names})
 
-    def moved(self, op: Operation, at: str) -> "Pointer":
+    def moved(self, op: Operation, at: str, mirrored: bool) -> "Pointer":
         prev = ([{"commit": self.commit, "digest": self.digest, "generation": self.generation,
                   "op": self.op, "updated_at": self.updated_at}] if self.commit else [])
         return Pointer(repo=self.repo, ref=self.ref, commit=op.to_commit, digest=op.digest,
-                       generation=self.generation + 1, op=op.key, updated_at=at,
+                       generation=self.generation + 1, op=op.key, updated_at=at, mirrored=mirrored,
                        history=(prev + self.history)[:self.HISTORY])

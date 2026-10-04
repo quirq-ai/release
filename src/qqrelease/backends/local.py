@@ -27,12 +27,20 @@ class Mirror:
                            cwd=self._repo(repo), capture_output=True, text=True)
         return p.stdout.strip() if p.returncode == 0 else ""
 
-    def write_ref(self, repo: str, ref: str, old: str, new: str) -> str:
-        if self.read_ref(repo, ref) == new:
+    def actor(self) -> str:
+        return "local"
+
+    def write_ref(self, repo: str, ref: str, expected: list[str], new: str) -> str:
+        cur = self.read_ref(repo, ref)
+        if cur == new:
             return "already there"
-        p = subprocess.run(["git", "update-ref", f"refs/heads/{ref}", new, old or ZERO],
+        if cur not in expected:
+            raise ReleaseError(f"{repo}: {ref} is at {cur[:12] or '(absent)'}, which the executor did not "
+                               "set; something else moved it")
+        # update-ref compares and swaps against what we read.
+        p = subprocess.run(["git", "update-ref", f"refs/heads/{ref}", new, cur or ZERO],
                            cwd=self._repo(repo), capture_output=True, text=True)
         if p.returncode != 0:
-            raise ReleaseError(f"{repo}: could not move {ref} {old[:12] or '(new)'} -> {new[:12]}: "
+            raise ReleaseError(f"{repo}: could not move {ref} {cur[:12] or '(new)'} -> {new[:12]}: "
                                f"{p.stderr.strip()}")
         return "pushed"

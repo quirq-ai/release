@@ -25,7 +25,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write           # push this repo's release-state branch only
-      actions: read             # read the onboarded repos' post-submit runs
+      # Post-submit runs are read from the onboarded repos, which are public; github.token only
+      # raises the API rate limit for those reads.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -43,11 +44,15 @@ jobs:
       - run: python -m pip install --quiet .
       - name: open the release-state branch
         run: |
-          if git fetch --depth 1 origin release-state; then
+          if git ls-remote --exit-code origin refs/heads/release-state > /dev/null; then
+            git fetch --depth 1 origin release-state
             git worktree add -B release-state .qq/state FETCH_HEAD
           else
             git worktree add --orphan -b release-state .qq/state
           fi
+      - name: list the onboarded repos for the executor token
+        id: repos
+        run: echo "names=$(qqrelease repos --config .qq/infra-config)" >> "$GITHUB_OUTPUT"
       # The release executor identity. Absent until suraj creates it (see the header).
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
         id: executor
@@ -56,6 +61,7 @@ jobs:
           client-id: ${{ vars.QQ_RELEASE_CLIENT_ID }}
           private-key: ${{ secrets.QQ_RELEASE_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.repos.outputs.names }}   # the onboarded repos only
           permission-contents: write
       - name: advance lkgr
         env:

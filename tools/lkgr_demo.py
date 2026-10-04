@@ -7,7 +7,7 @@ place of GitHub) and checks:
 
 - lkgr moved with no input but the verdicts;
 - the target repo's `lkgr` ref and the state store agree;
-- lkgr never names a commit whose newest verdict on any builder is not green.
+- lkgr names only a commit that is green on every builder at that tick.
 
     python tools/lkgr_demo.py --config .qq/infra-config
 """

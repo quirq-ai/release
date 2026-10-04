@@ -47,8 +47,11 @@ Only the executor moves `lkgr` and `channels/*`. Every move is an **operation**:
 intent (repo, ref, from, to, digest) and the pointer's generation, and is committed and pushed to
 this repo's `release-state` branch **before** anything else changes. Then the target repo's git ref
 moves (compare-and-swap: it refuses if something else moved it), then the new pointer and the
-applied operation are recorded together. A retry with the same intent is a no-op; one that died
-after recording finishes the same operation.
+applied operation are recorded together. A retry with the same intent is a no-op. Until its
+result is recorded the pointer names the operation as `pending`, and every run finishes a pending
+operation before planning a new one, so a run that died after moving the ref (or timed out on a
+write that landed) never wedges the pointer. The one case lkgr cannot fix alone is `stuck`: its
+commit turned red and no listed commit is green; it stays put and the workflow fails loudly.
 
     release-state branch
       pointers/<repo>/<ref>.json   what lkgr and each channel name (schema qq-pointer/1), with history
@@ -58,7 +61,9 @@ On GitHub the ref is the branch `<ref>` in the target repo (`lkgr`, `channels/ca
 with the executor's App token (`QQ_RELEASE_TOKEN`). gate's `qq-release-refs` rulesets let only
 that identity write them. **TODO(suraj):** the identity does not exist yet. Until it does, the ref
 write is skipped and the operation records `skipped: no release executor identity`; the pointer
-still moves in `release-state`, which is the record readers use.
+still moves in `release-state`, which is the record readers use. The pointer remembers that the
+ref was not written (`mirrored: false`), so the first write after the identity exists creates the
+ref instead of refusing it as moved by someone else.
 
 ## v0 status
 
