@@ -157,17 +157,21 @@ jobs:
           DATE: ${{ needs.plan.outputs.date }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # One repo's error must not lose another repo's hold: write `held` whatever the exit code.
+          rc=0
           qqrelease canary finish --config .qq/infra-config --state .qq/state --publish \
             --plan .qq/dl/canary-plan/plan.json --stages-dir .qq/stages --held-out held.json \
-            --date "$DATE" --run-url "$RUN_URL" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "held=$(cat held.json)" >> "$GITHUB_OUTPUT"
+            --date "$DATE" --run-url "$RUN_URL" | tee -a "$GITHUB_STEP_SUMMARY" || rc=$?
+          if [ -f held.json ]; then echo "held=$(cat held.json)" >> "$GITHUB_OUTPUT"; fi
+          exit "$rc"
 
   held:
     needs: [plan, finish]
-    if: always() && needs.finish.result == 'success' && needs.finish.outputs.held != '[]'
+    if: always() && needs.finish.outputs.held != '' && needs.finish.outputs.held != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
+      contents: read            # checkout and the executor's ls-remote
       issues: write             # the failure record's issue and the postmortem draft, in this repo
     strategy:
       fail-fast: false

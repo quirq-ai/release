@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -228,6 +229,9 @@ def cmd_canary_finish(args) -> int:
             print(f"::error::{sel.repo}: {e}", file=sys.stderr)
             lines.append(f"| {sel.repo} | **error** | | | {' '.join(str(e).replace('|', '/').split())} |")
             continue
+        if run.outcome == "error":
+            rc = 2                      # the job goes red; the watchdog runs the day again
+            print(f"::error::{sel.repo}: {run.reason}", file=sys.stderr)
         if run.outcome == "held":
             held.append({"repo": run.repo, "commit": run.commit, "previous": run.previous,
                          "digest": run.digest, "stage": next(s["name"] for s in run.stages if not s["ok"]),
@@ -261,7 +265,9 @@ def cmd_canary_toolchains(args) -> int:
     if not (Path(args.src) / canary.MANIFEST).is_file():
         return 0          # not onboarded: the build stage says so
     for name, version in canary.toolchain_versions(Path(args.src)).items():
-        print(f"{name}={version}")
+        # Product-controlled text going into $GITHUB_OUTPUT: one plain token per line, or nothing.
+        if re.fullmatch(r"[A-Za-z0-9_.-]+", name) and re.fullmatch(r"[A-Za-z0-9_.+-]+", version):
+            print(f"{name}={version}")
     return 0
 
 

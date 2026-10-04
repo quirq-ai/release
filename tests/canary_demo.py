@@ -130,8 +130,11 @@ def main(argv=None) -> int:
                 shipped.append(head)
                 print(f"day {day}: {'ok' if ok else 'FAILED'}: {run['outcome']} {head[:12]} {canary_now.digest[:19]}")
             else:
-                ok = run["outcome"] == "noop" and len(run.get("earlier", [])) == 1
-                print(f"rerun: {'ok' if ok else 'FAILED'}: {run['outcome']} ({run['reason']})")
+                later = run.get("later", [])
+                ok = run["outcome"] == "shipped" and len(later) == 1 and later[0]["outcome"] == "noop"
+                print(f"rerun: {'ok' if ok else 'FAILED'}: {later[-1]['outcome'] if later else '?'} "
+                      f"({later[-1]['reason'] if later else 'no second record'}); the day's verdict stays "
+                      f"{run['outcome']}")
             if not ok:
                 failures.append(f"day {day}: unexpected {run['outcome']}: {run['reason']}")
         runs = sorted(p.name for p in (state / "canary" / repo / "runs").glob("*.json"))

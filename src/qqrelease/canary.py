@@ -67,7 +67,7 @@ class Selection:
 class CanaryRun:
     repo: str
     date: str
-    outcome: str           # shipped, held, noop
+    outcome: str           # shipped, held (verdicts); noop; error (the pipeline failed: not a record)
     commit: str = ""
     previous: str = ""
     digest: str = ""
@@ -185,6 +185,8 @@ def check_probes(records: list[dict], required: list[dict]) -> tuple[bool, str]:
         for p in d.get("probes", []):
             path = p.get("path", "")
             ran[path] = ran.get(path, True) and bool(p.get("ok"))
+    if not ran:
+        return False, "no probe ran on any deployment (missing signal: hold)"
     failed = sorted(path for path, ok in ran.items() if not ok)
     if failed:
         return False, "probes failed: " + ", ".join(failed)
@@ -255,9 +257,35 @@ def run_stages(cfg: dict, repo: str, commit: str, src: Path, out: Path, toolchai
 
 # --- stage 7 and the record, under the executor's lock ------------------------------------------
 
+STAGES = ("build", "verify", "fuzz-smoke", "deploy-probe")
+TERMINAL = ("shipped", "held")
+
+
+def verdict(stages: dict | None, sel: Selection) -> tuple[str, str]:
+    """What the worker's stage results say, recomputed here: the worker runs product code, so its own
+    `ok` is never trusted. Returns ("pass" | "fail" | "skip" | "missing", detail)."""
+    if stages is None or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
+        return "missing", "the worker left no stage results for this commit"
+    if stages.get("skip"):
+        return "skip", str(stages["skip"])
+    got = stages.get("stages") or []
+    for s in got:
+        if s.get("name") in STAGES and s.get("ok") is False:
+            return "fail", s["name"]
+    if [s.get("name") for s in got] != list(STAGES) or not all(s.get("ok") is True for s in got):
+        return "missing", "the stage results are incomplete: " + ", ".join(s.get("name", "?") for s in got)
+    if not str(stages.get("digest", "")).startswith("sha256:"):
+        return "missing", "the stage results name no sha256 artifact digest"
+    return "pass", ""
+
+
 def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None, date: str,
            run_url: str = "", started_at: str = "", at: str | None = None) -> CanaryRun:
-    """Record the day's canary for one repo and, if every stage passed, promote it."""
+    """Record the day's canary for one repo and, if every stage passed, promote it.
+
+    Outcomes: `shipped` and `held` are verdicts; `noop` means nothing to do; `error` means the
+    pipeline itself failed (lost worker, missing results, a promote that could not be written). An
+    error holds nothing and is not a day's record, so the watchdog runs that day again."""
     from qqrelease import executor
 
     at = at or executor.now_iso()
@@ -265,48 +293,63 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
                     reason=sel.reason, run_url=run_url, started_at=started_at or at, finished_at=at)
     files: dict[Path, str] = {}
     if sel.action == "build":
-        if stages is None or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
-            stages = {"stages": [{"name": "build", "ok": False, "seconds": 0,
-                                  "detail": "the worker left no stage results (missing signal: hold)"}],
-                      "ok": False, "digest": ""}
-        run.stages, run.digest = stages["stages"], stages.get("digest", "")
-        if stages.get("skip"):
-            run.reason = stages["skip"]
-        elif stages.get("ok"):
-            executor.finish_pending(store, mirror, sel.repo, channels.ref_of(CHANNEL), at=at)
+        v, detail = verdict(stages, sel)
+        if v != "missing":
+            run.stages, run.digest = stages.get("stages", []), stages.get("digest", "")
+        if v == "skip":
+            run.reason = detail
+        elif v == "missing":
+            run.outcome, run.reason = "error", f"not judged: {detail}; the watchdog runs this day again"
+        elif v == "fail":
+            failed = next(s for s in run.stages if s.get("name") == detail)
+            first = (failed.get("detail") or "").splitlines()
+            run.outcome = "held"
+            run.reason = f"held at {detail}: {first[0] if first else ''}"
+            files[held_path(store, sel.repo, sel.commit)] = json.dumps(
+                {"repo": sel.repo, "commit": sel.commit, "date": date, "stage": detail,
+                 "digest": run.digest, "run_url": run_url}, sort_keys=True, indent=2) + "\n"
+        else:
+            ref = channels.ref_of(CHANNEL)
             try:
-                op = channels.plan_promote(cfg, store, sel.repo, CHANNEL, sel.commit, run.digest,
-                                           reason=f"daily canary {date}", actor=mirror.actor())
-                op, _ = channels.apply(store, mirror, op, at=at)
-                run.outcome, run.operation = "shipped", op.key
-                run.stages = run.stages + [{"name": "promote", "ok": True, "seconds": 0,
-                                            "detail": f"channels/canary -> {sel.commit[:12]} ({op.mirror})"}]
+                executor.finish_pending(store, mirror, sel.repo, ref, at=at,
+                                        derived=channels.derived(store))
+                cur = store.pointer(sel.repo, ref)
+                if (cur.commit, cur.digest) == (sel.commit, run.digest):
+                    detail = f"channels/canary already names {sel.commit[:12]} (a rerun)"
+                    run.operation = cur.op
+                else:
+                    op = channels.plan_promote(cfg, store, sel.repo, CHANNEL, sel.commit, run.digest,
+                                               reason=f"daily canary {date}", actor=mirror.actor())
+                    op, _ = channels.apply(store, mirror, op, at=at)
+                    detail, run.operation = f"channels/canary -> {sel.commit[:12]} ({op.mirror})", op.key
+                run.outcome = "shipped"
+                run.stages = run.stages + [{"name": "promote", "ok": True, "seconds": 0, "detail": detail}]
                 run.reason = f"shipped {sel.commit[:12]} {run.digest}"
             except ReleaseError as e:
-                run.stages = run.stages + [{"name": "promote", "ok": False, "seconds": 0, "detail": str(e)}]
-        if run.outcome != "shipped" and not stages.get("skip"):
-            failed = next((s for s in run.stages if not s["ok"]), {"name": "?", "detail": ""})
-            run.outcome = "held"
-            run.reason = f"held at {failed['name']}: {failed['detail'].splitlines()[0] if failed['detail'] else ''}"
-            files[held_path(store, sel.repo, sel.commit)] = json.dumps(
-                {"repo": sel.repo, "commit": sel.commit, "date": date, "stage": failed["name"],
-                 "digest": run.digest, "run_url": run_url}, sort_keys=True, indent=2) + "\n"
+                run.outcome = "error"
+                run.reason = f"passed every stage but the promote failed: {e}; the watchdog runs this day again"
     path = run_path(store, sel.repo, date)
+    doc = dataclasses.asdict(run)
     if path.is_file():
-        # A second run on the same day (the watchdog, a retry): keep the first, add this one.
+        # Another run on the same day (the watchdog, a retry). The first verdict stays on top, and
+        # what came after is kept under `later`; a verdict replaces an earlier no-op or error.
         prior = json.loads(path.read_text())
-        earlier = prior.get("earlier", []) + [{k: v for k, v in prior.items() if k != "earlier"}]
-        text = json.dumps({**dataclasses.asdict(run), "earlier": earlier}, sort_keys=True, indent=2) + "\n"
-    else:
-        text = run.to_json()
-    files[path] = text
+        if prior.get("outcome") in TERMINAL:
+            doc = {**prior, "later": prior.get("later", []) + [doc]}
+        else:
+            earlier = prior.pop("earlier", []) + [{k: v for k, v in prior.items() if k != "later"}]
+            doc = {**doc, "earlier": earlier}
+    files[path] = json.dumps(doc, sort_keys=True, indent=2) + "\n"
     store.save(files, f"canary {sel.repo} {date}: {run.outcome} {sel.commit[:12]}")
     return run
 
 
 def missing_runs(cfg: dict, store: Store, date: str) -> list[str]:
     """Canary repos with no run record for `date`: what the watchdog starts."""
-    return [r for r in canary_repos(cfg) if not run_path(store, r, date).is_file()]
+    def judged(r: str) -> bool:
+        p = run_path(store, r, date)
+        return p.is_file() and json.loads(p.read_text()).get("outcome") != "error"
+    return [r for r in canary_repos(cfg) if not judged(r)]
 
 
 def toolchain_versions(src: Path) -> dict[str, str]:
@@ -320,10 +363,25 @@ def toolchain_versions(src: Path) -> dict[str, str]:
     return {name: str(t.get("version", "")) for name, t in sorted(doc.get("toolchains", {}).items())}
 
 
+POSTMORTEM_TEMPLATE = "templates/postmortem.md"
+
+
 def postmortem_draft(cfg_root: Path, run: CanaryRun, failure_issue: str = "") -> str:
     """A postmortem draft for a held canary, filled from captured evidence (postmortem.toml trigger
-    `canary-deploy-failed`, template from infra-config). TODO(expert): an agent completes the
-    narrative sections (V1-GAR-03); v0 fills only what the pipeline captured."""
+    `canary-deploy-failed`). Every section of infra-config's template is kept, in its order; v0 adds
+    the stage table under Summary. TODO(expert): an agent completes the narrative sections
+    (V1-GAR-03); v0 fills only what the pipeline captured."""
+    draft = _postmortem_body(run, failure_issue)
+    tmpl = Path(cfg_root) / POSTMORTEM_TEMPLATE
+    if tmpl.is_file():
+        have = {l for l in draft.splitlines() if l.startswith("## ")}
+        for heading in (l for l in tmpl.read_text().splitlines() if l.startswith("## ")):
+            if heading not in have:
+                draft += f"\n{heading}\n\nTODO(agent): fill in from the template.\n"
+    return draft
+
+
+def _postmortem_body(run: CanaryRun, failure_issue: str) -> str:
     failed = next((s for s in run.stages if not s["ok"]), {"name": "?", "detail": ""})
     rows = "\n".join(f"| {s['name']} | {'pass' if s['ok'] else '**fail**'} | {s['seconds']} s |"
                      for s in run.stages)
@@ -378,4 +436,8 @@ TODO(agent): find the culprit between `{run.previous[:12] or 'the first canary'}
 | Action | Owner | Issue |
 |---|---|---|
 | | | |
+
+## Lessons learned
+
+TODO(agent): what went well, what went badly, and where we got lucky.
 """

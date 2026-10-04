@@ -124,8 +124,15 @@ from infra-config's template (trigger `canary-deploy-failed`); v0 fills it from 
 and an agent completes it in v1. Stage results go to the results store through the sink (run kind
 `canary`).
 
+Only a stage's verdict holds a commit. `finish` recomputes it from the stage results itself (all four
+stages, in order, passing, with a `sha256:` digest), since the worker runs product code. When the
+pipeline itself fails (a lost worker, missing or incomplete results, a promote that could not be
+written), the outcome is `error`: nothing is held, the job goes red, and the day counts as not yet
+run. The first verdict of a day stays on top of its record and later runs are kept under `later`;
+rerunning `finish` after a ship records the ship again, never a hold.
+
 GitHub may drop a scheduled run, so `canary-watchdog` checks twice a day that every canary repo has
-today's run record and, if one is missing and no canary is in flight, starts `canary` by hand.
+a verdict or no-op for today and, if one is missing and no canary is in flight, starts `canary` by hand.
 
 `tests/canary_demo.py` plays eight days against a fixture service (`tests/fixtures/canary_app`): seven
 ship with no human touch, and a planted bad canary (its `/health` answers 500) is held at
