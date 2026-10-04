@@ -106,6 +106,12 @@ def _channel_move(args, plan, kind: str) -> int:
         print(f"the pending rollback {settled.key} landed: {args.repo} {args.channel} names "
               f"{settled.to_commit[:12]} {settled.digest}; not rolling back again")
         return 0
+    if (settled is not None and settled.state == "applied" and settled.kind == kind == "promote"
+            and (settled.to_commit, settled.digest) == (args.commit, args.digest)):
+        # A retry of a promote whose write landed: the channel already names what was asked.
+        print(f"the pending promote {settled.key} landed: {args.repo} {args.channel} names "
+              f"{settled.to_commit[:12]} {settled.digest}")
+        return 0
     op = plan(cfg, store, mirror.actor())
     op, ptr = channels.apply(store, mirror, op, at=args.now)
     print(f"{op.kind} {op.repo} {op.ref}: {op.from_commit[:12] or '(new)'} -> {ptr.commit[:12]} "
@@ -121,7 +127,8 @@ def cmd_promote(args) -> int:
 
 def cmd_rollback(args) -> int:
     return _channel_move(args, lambda cfg, store, actor: channels.plan_rollback(
-        cfg, store, args.repo, args.channel, reason=args.reason, actor=actor), "rollback")
+        cfg, store, args.repo, args.channel, reason=args.reason, actor=actor,
+        from_commit=args.from_commit), "rollback")
 
 
 def cmd_show(args) -> int:
@@ -159,6 +166,8 @@ def add_channel(sub) -> None:
     _common(s, many_repos=False)
     s.add_argument("--channel", required=True)
     s.add_argument("--reason", default="")
+    s.add_argument("--from", dest="from_commit", default="",
+                   help="the commit the channel names now; refused if it has moved (a re-run is a no-op)")
     s.set_defaults(func=cmd_rollback)
     s = csub.add_parser("show", help="print channels.json: what every channel names")
     s.add_argument("--state", required=True)

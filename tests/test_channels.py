@@ -181,6 +181,34 @@ def test_retrying_a_rollback_whose_write_landed_does_not_roll_back_again(world, 
     assert published["commit"] == shas[0]          # settling rewrites the manifest too
 
 
+def test_a_rerun_rollback_with_from_is_refused(world):
+    cfg, store, mirror, repo, shas, _ = world
+    ship(cfg, store, mirror, repo, shas[0], D1)
+    ship(cfg, store, mirror, repo, shas[1], D2)
+    channels.apply(store, mirror, channels.plan_rollback(cfg, store, repo, "canary", from_commit=shas[1]))
+    with pytest.raises(ReleaseError, match="has moved"):              # the double click
+        channels.plan_rollback(cfg, store, repo, "canary", from_commit=shas[1])
+    assert store.pointer(repo, "channels/canary").commit == shas[0]
+
+
+def test_retrying_a_promote_whose_write_landed_exits_0(world, config_root, tmp_path):
+    cfg, store, mirror, repo, shas, d = world
+    lkgr_to(store, mirror, repo, shas[0])
+    op = channels.plan_promote(cfg, store, repo, "canary", shas[0], D1)
+
+    class Timeout:
+        def write_ref(self, *a):
+            mirror.write_ref(*a)
+            raise ReleaseError("timed out")
+
+    with pytest.raises(ReleaseError):
+        channels.apply(store, Timeout(), op)
+    rc = cli.main(["channel", "promote", "--config", str(config_root), "--state", str(store.root),
+                   "--backend", "local", "--target-root", str(tmp_path / "targets"), "--repo", repo,
+                   "--channel", "canary", "--commit", shas[0], "--digest", D1])
+    assert rc == 0 and store.pointer(repo, "channels/canary").commit == shas[0]
+
+
 def test_rules_that_need_a_person_or_a_signal_are_refused(world):
     cfg, store, *_ = world
     for name in ("dev", "stable"):

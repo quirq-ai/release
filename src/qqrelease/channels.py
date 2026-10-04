@@ -107,7 +107,7 @@ def rollback_target(cur: Pointer) -> dict | None:
 
 
 def plan_rollback(cfg: dict, store: Store, repo: str, channel: str, reason: str = "",
-                  actor: str = "local") -> Operation:
+                  actor: str = "local", from_commit: str = "") -> Operation:
     check_repo(cfg, repo, channel)
     rules = channel_cfg(cfg, channel).get("rollback", {})
     if rules.get("approval", "none") != "none":
@@ -116,6 +116,9 @@ def plan_rollback(cfg: dict, store: Store, repo: str, channel: str, reason: str 
     cur = store.pointer(repo, ref_of(channel))
     if not cur.commit:
         raise ReleaseError(f"{repo} {channel} names nothing yet: there is nothing to roll back")
+    if from_commit and not cur.commit.startswith(from_commit):
+        raise ReleaseError(f"{repo} {channel} names {cur.commit[:12]}, not {from_commit[:12]}: it has moved "
+                           "(or this rollback already ran), so not rolling back")
     prev = rollback_target(cur)
     if prev is None:
         raise ReleaseError(f"{repo} {channel} has no previous value to roll back to")

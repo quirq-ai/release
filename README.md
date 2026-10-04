@@ -75,7 +75,7 @@ from `repos.toml`. A channel's pointer `channels/<name>` names a commit **and** 
 
 ```sh
 qqrelease channel promote  --config ... --state ... --repo NAME --channel canary --commit SHA --digest sha256:...
-qqrelease channel rollback --config ... --state ... --repo NAME --channel canary --reason "..."
+qqrelease channel rollback --config ... --state ... --repo NAME --channel canary --reason "..." --from COMMIT
 qqrelease channel show     --state ...
 qq channel rollback ...    # the same command in depot's qq (entry point qq.commands)
 ```
@@ -85,7 +85,8 @@ qq channel rollback ...    # the same command in depot's qq (entry point qq.comm
 - `rollback` points the channel at the newest earlier commit and digest from the pointer's history
   that it was never rolled back from. Nothing is rebuilt. The value it moves away from is recorded
   as rolled back: a second rollback goes further back, never forward, and a promotion never ships it
-  again. Retrying a rollback whose write already landed does nothing more. The `channel-rollback`
+  again. Retrying a rollback whose write already landed does nothing more, and with `--from` (the commit the channel names now) a re-run or double
+  dispatch is refused instead of rolling back twice. The `channel-rollback`
   workflow runs it on demand.
 - A promotion that changes nothing is refused. When a channel takes its build from another channel
   (dev from canary), it takes that channel's digest too, so only a vetted artifact moves on.
