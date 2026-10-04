@@ -147,17 +147,22 @@ rerunning `finish` after a ship records the ship again, never a hold.
 An action that could not start on the machine is `error` too: exit 126 or 127 (the runner records
 127 when a command is missing), or the adapter's `fetch:toolchain-check` failing (the machine lacks
 the pinned toolchain). These are exit codes and action names qqrecipes writes, never output text.
-A product test that itself exits 127 therefore reads as `error` and is rerun, never shipped.
+Product code can exit 126 or 127 too, so an error is never final: a commit the canary could not
+judge 3 times in a row since its last release (`ERROR_LIMIT`; about a day of the schedule plus the
+watchdog) is held, tagged `possible runner fault`, with a failure record and a postmortem draft like
+any hold. Until then it is rerun; a flaky failure can still ship on a green rerun within those 3.
+The same cap ends the loop for a commit that breaks its own `infra/repo.toml` (qqrecipes stops
+before writing results) and for a lost worker.
 
-Exit codes still cannot always tell a broken commit from a broken machine. A commit that breaks its
-own `infra/repo.toml` makes qqrecipes stop before writing results, so it reads as `error` and is
-rerun rather than held (the lkgr gate normally stops such a commit first). A machine fault that
-looks like an ordinary failing action is held. Once the machine is fixed, release that hold with the
-`canary-release-hold` workflow (repo, full held commit, reason), which runs
-`qqrelease canary release-hold`: from main only, it records a keyed `release-hold` operation and
-marks the hold record released in one release-state commit, and the next canary builds the commit
-again. A retried dispatch is a no-op; if the commit is held again, it needs a release of its own.
-Close the hold's failure issue by hand with what was wrong with the machine.
+A machine fault that looks like an ordinary failing action is held too. Once the machine is fixed,
+release the hold with the `canary-release-hold` workflow (repo, full held commit, `released_before`,
+reason), which runs `qqrelease canary release-hold`. `released_before` names the hold: the number of
+entries in the hold record's `releases` (0 for the commit's first hold). From main only, it records
+a `release-hold` operation, keyed on the release before it, and marks the hold record released in one
+release-state commit, with the run and who dispatched it; the next canary builds the commit again.
+A retried dispatch is a no-op, and re-running a finished release after the commit was held again is
+refused, so each hold needs its own release. The reason is one line under 500 characters. Close the
+hold's failure issue by hand with what was wrong with the machine.
 
 GitHub may drop a scheduled run, so `canary-watchdog` checks twice a day that every canary repo has
 a verdict or no-op for today and, if one is missing and no canary is in flight, starts `canary` by hand.

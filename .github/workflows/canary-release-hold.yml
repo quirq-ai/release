@@ -2,11 +2,13 @@
 # runner fault that still looked like a failing action). `qqrelease canary release-hold` records a
 # keyed operation and marks canary/<repo>/held/<commit>.json released on release-state, in one
 # commit; the next canary run builds that commit again. No ref moves, so no executor App token.
-# A retried dispatch is a no-op; a later hold of the same commit needs its own release.
+# The dispatch names the hold: `released_before` is the number of entries in the hold record's
+# `releases` (0 for a commit's first hold). A retried dispatch is a no-op; re-running a finished run
+# after the commit was held again is refused, so each hold needs its own release.
 # Close the hold's failure issue by hand with a note on what was wrong with the machine.
-# Queued runs: GitHub keeps one pending run per concurrency group (`release-channels`, shared with
-# the canary's finish and report jobs and channel-rollback), so a run that joins while one runs and
-# one waits cancels the waiting one. Check that your run ran; a retry is safe.
+# Concurrency: its own group, so a release never cancels a pending canary or rollback (GitHub keeps
+# one pending run per group). Its push to release-state rebases over theirs, and finish never writes
+# a hold record that still holds, so the two cannot both change one record.
 name: canary-release-hold
 run-name: release the canary hold on ${{ inputs.repo }} ${{ inputs.commit }}
 on:
@@ -20,8 +22,13 @@ on:
         description: full held commit (canary/<repo>/held/<commit>.json on release-state)
         required: true
         type: string
+      released_before:
+        description: entries in the hold record's `releases` (0 for the commit's first hold)
+        required: true
+        default: "0"
+        type: string
       reason:
-        description: why the hold was the machine's fault (recorded in the operation)
+        description: why the hold was the machine's fault (recorded in the operation; one line, under 500 characters)
         required: true
         type: string
 permissions:
@@ -30,7 +37,7 @@ defaults:
   run:
     shell: bash
 concurrency:
-  group: release-channels       # every writer of canary records, with the canary's finish job
+  group: release-canary-holds
   cancel-in-progress: false
 jobs:
   release-hold:
@@ -48,7 +55,10 @@ jobs:
           REPO: ${{ inputs.repo }}
           COMMIT: ${{ inputs.commit }}
           REASON: ${{ inputs.reason }}
+          RELEASED_BEFORE: ${{ inputs.released_before }}
+          REQUESTED_BY: ${{ github.actor }} (triggered by ${{ github.triggering_actor }})
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           qqrelease canary release-hold --config .qq/infra-config --state .qq/state --publish \
-            --repo "$REPO" --commit "$COMMIT" --reason "$REASON" --actor "$RUN_URL" | tee -a "$GITHUB_STEP_SUMMARY"
+            --repo "$REPO" --commit "$COMMIT" --reason "$REASON" \
+            --released-before "$RELEASED_BEFORE" --actor "$RUN_URL" --requested-by "$REQUESTED_BY" | tee -a "$GITHUB_STEP_SUMMARY"

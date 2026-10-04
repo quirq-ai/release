@@ -235,7 +235,7 @@ def cmd_canary_finish(args) -> int:
             print(f"::error::{sel.repo}: {run.reason}", file=sys.stderr)
         if run.outcome == "held":
             held.append({"repo": run.repo, "commit": run.commit, "previous": run.previous,
-                         "digest": run.digest, "stage": next(s["name"] for s in run.stages if s.get("ok") is False),
+                         "digest": run.digest, "stage": next((s["name"] for s in run.stages if s.get("ok") is False), "pipeline"),
                          "summary": f"Canary held for {run.repo}: {run.reason}"[:200]})
         why = " ".join(run.reason.replace("|", "/").split())
         lines.append(f"| {run.repo} | **{run.outcome}** | {run.commit[:12]} | {run.digest[:19]} | {why} |")
@@ -267,7 +267,8 @@ def cmd_canary_release_hold(args) -> int:
     store = Store(args.state, push=args.publish)
     if args.repo not in canary.canary_repos(config.load(Path(args.config))):
         raise ReleaseError(f"{args.repo!r} is not a canary repo in infra-config")
-    outcome, key = canary.release_hold(store, args.repo, args.commit, args.reason, actor=args.actor)
+    outcome, key = canary.release_hold(store, args.repo, args.commit, args.reason, args.released_before,
+                                       actor=args.actor, requested_by=args.requested_by)
     print(f"{outcome}: {args.repo} {args.commit[:12]} (operation {key[:12] or 'unknown'}); "
           "the next canary run builds it again")
     return 0
@@ -331,7 +332,11 @@ def add_canary(sub) -> None:
     s.add_argument("--repo", required=True)
     s.add_argument("--commit", required=True, metavar="COMMIT", help="the full held commit")
     s.add_argument("--reason", required=True, help="why (recorded in the operation and the hold record)")
-    s.add_argument("--actor", default="local", help="who released it: a workflow run URL, or local")
+    s.add_argument("--released-before", type=int, required=True, metavar="N",
+                   help="how many times this commit was released before this hold (the hold record's "
+                        "`releases`; 0 for a first hold): names the hold, so an old dispatch is refused")
+    s.add_argument("--actor", default="local", help="where it ran: a workflow run URL, or local")
+    s.add_argument("--requested-by", default="local", help="who asked: the dispatching account(s)")
     s.set_defaults(func=cmd_canary_release_hold)
     s = csub.add_parser("toolchains", help="name=version for each toolchain the manifest pins")
     s.add_argument("--src", required=True)
