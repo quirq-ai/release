@@ -374,6 +374,12 @@ def test_a_released_hold_is_built_again_and_a_retry_is_a_noop(world, config_root
     assert canary.select(cfg, store, repo).action == "noop"
     outcome, key2 = canary.release_hold(store, repo, shas[1], "runner fixed again")
     assert outcome == "released" and key2 != key and store.op(key2).generation == 1
+    # A record whose history was edited by hand never reports a release that did not happen.
+    hp = canary.held_path(store, repo, shas[1])
+    store.save({hp: json.dumps({**again, "state": "held", "releases": "oops"})}, "hand edit")
+    with pytest.raises(ReleaseError, match="changed by hand"):
+        canary.release_hold(store, repo, shas[1], "again")
+    assert canary.is_held(store, repo, shas[1])
 
 
 def test_a_hold_record_from_before_releases_still_holds(world):

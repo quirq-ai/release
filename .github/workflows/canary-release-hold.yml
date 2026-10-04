@@ -4,6 +4,9 @@
 # commit; the next canary run builds that commit again. No ref moves, so no executor App token.
 # A retried dispatch is a no-op; a later hold of the same commit needs its own release.
 # Close the hold's failure issue by hand with a note on what was wrong with the machine.
+# Queued runs: GitHub keeps one pending run per concurrency group (`release-channels`, shared with
+# the canary's finish and report jobs and channel-rollback), so a run that joins while one runs and
+# one waits cancels the waiting one. Check that your run ran; a retry is safe.
 name: canary-release-hold
 run-name: release the canary hold on ${{ inputs.repo }} ${{ inputs.commit }}
 on:

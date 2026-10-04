@@ -184,7 +184,9 @@ def release_hold(store: Store, repo: str, commit: str, reason: str, actor: str =
                    mirror="skipped: no ref moves; the next canary builds this commit again")
     done = store.op(op.key)
     if done is not None and done.state == "applied":
-        return "already released", op.key
+        # The record still holds although this release already applied: its history was edited.
+        raise ReleaseError(f"{p.relative_to(store.root)} still holds but release {op.key[:12]} already "
+                           "applied; its `releases` history was changed by hand, so fix the record")
     doc = {**doc, "state": "released",
            "releases": releases + [{"operation": op.key, "at": at, "actor": actor, "reason": reason}]}
     store.save({store.op_path(op.key): op.to_json(),
@@ -411,6 +413,7 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
                 try:
                     old = json.loads(hp.read_text())
                     releases = old.get("releases", []) if isinstance(old, dict) else []
+                    releases = releases if isinstance(releases, list) else []
                 except (OSError, ValueError):
                     pass
             files[hp] = json.dumps(
