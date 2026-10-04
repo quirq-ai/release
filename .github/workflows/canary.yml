@@ -201,7 +201,7 @@ jobs:
           FAILURE_ISSUE: ${{ steps.failure.outputs.issue }}
           COMMIT: ${{ matrix.commit }}
         run: |
-          title="Postmortem draft: canary held for $REPO on $DATE"
+          title="Postmortem draft: canary held for $REPO ${COMMIT:0:12} on $DATE"
           if [ -n "$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --label postmortem \
                 --search "\"$title\" in:title" --json number --jq '.[0].number')" ]; then
             echo "already drafted"; exit 0
