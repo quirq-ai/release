@@ -255,3 +255,20 @@ def test_a_repo_without_a_manifest_is_a_noop_not_a_held_canary(world, tmp_path):
     run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), doc, "2026-10-05")
     assert run.outcome == "noop" and "not onboarded" in run.reason
     assert not canary.held_path(store, repo, shas[1]).exists()
+
+
+def test_daily_report(world):
+    from qqrelease import report
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), passed(repo, shas[1]), "2026-10-05",
+                  run_url="https://example.invalid/runs/1")
+    text = report.build(cfg, store, "2026-10-05", [{"number": 7, "title": "Canary held | x", "url": "u"}])
+    assert f"| {repo} | **shipped** | `{shas[1][:12]}`" in text
+    assert "[#7](u) Canary held / x" in text
+    others = [r for r in canary.canary_repos(cfg) if r != repo]
+    for r in others:
+        assert f"| {r} | **no run** |" in text
+    assert "Could not read" in report.build(cfg, store, "2026-10-05", None)
+    path = report.write(cfg, store, "2026-10-05", [])
+    assert path.read_text().startswith("# Canary report 2026-10-05")

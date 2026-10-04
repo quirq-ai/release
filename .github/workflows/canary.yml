@@ -4,6 +4,7 @@
 #   finish  stage 7 under the executor's lock: promote channels/canary, or hold; one run record per
 #           repo per day on release-state (canary/<repo>/runs/<date>.json), read by the daily report
 #   held    per held canary: a failure record (test-pipelines) and a postmortem draft issue
+#   report  the day's report (V0-REL-04): one issue per day labelled canary-report, and reports/<date>.md
 # The schedule must equal infra-config channels.toml's canary schedule (a test checks it). GitHub can
 # drop a scheduled run, so canary-watchdog.yml starts this workflow if a day has no run record.
 name: canary
@@ -211,3 +212,39 @@ jobs:
           gh label create postmortem --repo "$GITHUB_REPOSITORY" --color B60205 \
             --description "postmortem draft (infra-config postmortem.toml)" 2>/dev/null || true
           gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label postmortem --body-file postmortem.md
+
+  report:
+    needs: [plan, finish, held]
+    if: always() && needs.finish.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: release-channels
+      cancel-in-progress: false
+    permissions:
+      contents: write           # reports/<date>.md on this repo's release-state branch
+      issues: write             # the day's report issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: ./.github/actions/executor
+      - name: write the daily canary report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DATE: ${{ needs.plan.outputs.date }}
+        run: |
+          gh issue list --repo "$GITHUB_REPOSITORY" --label qq-failure --state open --limit 200 \
+            --json number,title,url > open-records.json || rm -f open-records.json
+          qqrelease canary report --config .qq/infra-config --state .qq/state --publish --date "$DATE" \
+            --open-records open-records.json > report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          title="Canary report $DATE"
+          gh label create canary-report --repo "$GITHUB_REPOSITORY" --color 0E8A16 \
+            --description "daily canary report (V0-REL-04)" 2>/dev/null || true
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --label canary-report \
+                     --search "\"$title\" in:title" --json number,title \
+                     --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file report.md   # a rerun the same day
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label canary-report --body-file report.md
+          fi

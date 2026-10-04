@@ -141,6 +141,14 @@ deploy-probe with the previous canary kept. Presubmit runs it.
 Until onboarding lands `infra/repo.toml` in xo-space and innernet (V0-ONB-01) and their post-submit
 builders make an lkgr (xo-space #211, innernet #37), each day's record is a no-op saying why.
 
+## The daily canary report (V0-REL-04)
+
+After each day's canary, the `report` job files one issue, `Canary report <date>`, labelled
+`canary-report` (a rerun the same day edits it): what shipped, what was held and why, what was a
+no-op or did not run, what canary names now, and the open failure records (`qq-failure` issues). The
+same text is kept on `release-state` as `reports/<date>.md`. `qqrelease canary report` builds it; the
+canary demo checks a report exists for every day and that the bad day's says held.
+
 ## v0 status
 
 | Item | What | PR | State |
@@ -148,7 +156,7 @@ builders make an lkgr (xo-space #211, innernet #37), each day's record is a no-o
 | V0-REL-01 | `lkgr` ref | #2 | merged |
 | V0-REL-02 | Channel pointers and rollback | #3 | merged |
 | V0-REL-03 | Daily canary pipeline v0 | #4 | in review |
-| V0-REL-04 | Daily canary report | | waits on V0-REL-03 |
+| V0-REL-04 | Daily canary report | #5 | in review |
 
 Out of scope for v0: soak, automatic rollback, the fuzz stage, the dev channel and PostHog (v1);
 stable and staged rollout (v2).
