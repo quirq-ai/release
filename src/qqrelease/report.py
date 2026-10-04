@@ -57,10 +57,10 @@ def build(cfg: dict, store: Store, date: str, open_records: list[dict] | None = 
         noop += outcome == "noop"
         errors += outcome == "error"     # the pipeline failed, not the commit; the watchdog reruns it
         link = f"[run]({run['run_url']})" if run.get("run_url") else ""
-        later = [r.get("outcome", "?") for r in run.get("later", []) if r.get("outcome") != "noop"]
+        later = [r.get("outcome", "?") for r in run.get("later", []) if isinstance(r, dict) and r.get("outcome") != "noop"]
         also = f" (later the same day: {', '.join(_cell(o) for o in later)})" if later else ""
-        rows.append(f"| {repo} | **{_cell(outcome)}** | {_code(_cell(run.get('commit', ''))[:12])} "
-                    f"| {_code(_cell(run.get('digest', ''))[:19])} | {_cell(run.get('reason', ''))}{also} {link} |")
+        rows.append(f"| {repo} | **{_cell(outcome)}** | {_code(_cell(run.get('commit') or '')[:12])} "
+                    f"| {_code(_cell(run.get('digest') or '')[:19])} | {_cell(run.get('reason', ''))}{also} {link} |")
     names = []
     for repo in repos:
         p = store.pointer(repo, channels.ref_of(canary.CHANNEL))
