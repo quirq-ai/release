@@ -311,3 +311,23 @@ def test_a_push_race_with_the_other_writer_is_rebased(tmp_path):
     sb.save({b / "pointers" / "x" / "lkgr.json": "{\"other\": 1}\n"}, "conflict")
     with pytest.raises(ReleaseError, match="conflicted"):
         sa.save({a / "pointers" / "x" / "lkgr.json": "{\"mine\": 1}\n"}, "mine")
+
+
+def test_a_tag_named_like_the_state_branch_is_never_read(tmp_path):
+    """git resolves a short name to a tag before a branch; the state branch is always named in full."""
+    remote = tmp_path / "remote.git"
+    git("init", "-q", "--bare", "-b", "release-state", str(remote), cwd=tmp_path)
+    a, b, forger = tmp_path / "a", tmp_path / "b", tmp_path / "forger"
+    for d in (a, b, forger):
+        git("clone", "-q", str(remote), str(d), cwd=tmp_path)
+        git("checkout", "-q", "-b", "release-state", cwd=d)
+    (forger / "channels.json").write_text("forged\n")
+    git("add", "-A", cwd=forger)
+    git("-c", "user.name=f", "-c", "user.email=f@x.invalid", "commit", "-q", "-m", "forged", cwd=forger)
+    git("tag", "release-state", cwd=forger)
+    git("push", "-q", "origin", "refs/tags/release-state", cwd=forger)
+    Store(a, push=True).save({a / "pointers" / "x" / "lkgr.json": "{}\n"}, "lkgr")
+    Store(b, push=True).save({b / "pointers" / "x" / "channels" / "canary.json": "{}\n"}, "canary")
+    assert not (b / "channels.json").exists()                   # rebased onto the branch, not the tag
+    log = git("--git-dir", str(remote), "log", "--format=%s", "refs/heads/release-state", cwd=tmp_path)
+    assert log.splitlines() == ["canary", "lkgr"]

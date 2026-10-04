@@ -84,7 +84,7 @@ class Store:
                 return
             err = p.stderr.strip()
             # Lost a race with the other writer group: replay our commit on top of theirs.
-            r = self._git(*IDENTITY, "pull", "-q", "--rebase", "origin", self.branch, check=False)
+            r = self._git(*IDENTITY, "pull", "-q", "--rebase", "origin", f"refs/heads/{self.branch}", check=False)
             if r.returncode != 0:
                 self._git("rebase", "--abort", check=False)
                 raise ReleaseError(f"could not publish to {self.branch}: rebasing onto another writer's "
