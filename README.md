@@ -117,3 +117,7 @@ stable and staged rollout (v2).
 
 See [AGENTS.md](AGENTS.md). Run the checks as CI does: clone infra-config at the `pins.toml` commit into
 `.qq/infra-config`, then `python -m pip install -e ".[test]" && python -m pytest`.
+
+## Licence
+
+Apache-2.0; see [LICENSE](LICENSE).
