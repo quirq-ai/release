@@ -309,8 +309,51 @@ def test_a_push_race_with_the_other_writer_is_rebased(tmp_path):
     log = git("--git-dir", str(remote), "log", "--format=%s", "release-state", cwd=tmp_path)
     assert log.splitlines() == ["canary", "lkgr"]
     sb.save({b / "pointers" / "x" / "lkgr.json": "{\"other\": 1}\n"}, "conflict")
-    with pytest.raises(ReleaseError, match="conflicted"):
+    with pytest.raises(ReleaseError, match="conflict"):
         sa.save({a / "pointers" / "x" / "lkgr.json": "{\"mine\": 1}\n"}, "mine")
+    # S7: the refused commit is gone, so the next save publishes only its own change.
+    assert json.loads((a / "pointers" / "x" / "lkgr.json").read_text()) == {"other": 1}
+    sa.save({a / "pointers" / "y" / "lkgr.json": "{}\n"}, "next")
+    log = git("--git-dir", str(remote), "log", "--format=%s", "release-state", cwd=tmp_path)
+    assert log.splitlines() == ["next", "conflict", "canary", "lkgr"]
+
+
+def test_a_rebase_never_merges_two_writers_changes_to_one_file(tmp_path):
+    """A compare-and-swap per file: lines far apart would merge cleanly, into a record nobody wrote."""
+    remote = tmp_path / "remote.git"
+    git("init", "-q", "--bare", "-b", "release-state", str(remote), cwd=tmp_path)
+    a, b = tmp_path / "a", tmp_path / "b"
+    for d in (a, b):
+        git("clone", "-q", str(remote), str(d), cwd=tmp_path)
+        git("checkout", "-q", "-b", "release-state", cwd=d)
+    sa, sb = Store(a, push=True), Store(b, push=True)
+    lines = [f"line {i}" for i in range(20)]
+    sa.save({a / "rec.txt": "\n".join(lines) + "\n"}, "base")
+    git("pull", "-q", "origin", "refs/heads/release-state", cwd=b)
+    sa.save({a / "rec.txt": "\n".join(["first"] + lines[1:]) + "\n"}, "a")
+    with pytest.raises(ReleaseError, match="another writer changed rec.txt"):
+        sb.save({b / "rec.txt": "\n".join(lines[:-1] + ["last"]) + "\n"}, "b")
+    assert (b / "rec.txt").read_text().startswith("first")
+
+
+def test_a_refused_push_never_rides_along_with_the_next_save(tmp_path):
+    remote = tmp_path / "remote.git"
+    git("init", "-q", "--bare", "-b", "release-state", str(remote), cwd=tmp_path)
+    hook = remote / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nwhile read old new ref; do\n"
+                    "  git diff --name-only $old $new 2>/dev/null | grep -q huge && exit 1\ndone\nexit 0\n")
+    hook.chmod(0o755)
+    a = tmp_path / "a"
+    git("clone", "-q", str(remote), str(a), cwd=tmp_path)
+    git("checkout", "-q", "-b", "release-state", cwd=a)
+    sa = Store(a, push=True)
+    sa.save({a / "first.json": "{}\n"}, "first")
+    with pytest.raises(ReleaseError):
+        sa.save({a / "huge.json": "{}\n"}, "refused")
+    assert not (a / "huge.json").exists()
+    sa.save({a / "other.json": "{}\n"}, "other repo's record")
+    log = git("--git-dir", str(remote), "log", "--format=%s", "release-state", cwd=tmp_path)
+    assert log.splitlines() == ["other repo's record", "first"]
 
 
 def test_a_tag_named_like_the_state_branch_is_never_read(tmp_path):

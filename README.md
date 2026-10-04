@@ -148,7 +148,7 @@ An action that could not start on the machine is `error` too: exit 126 or 127 (t
 127 when a command is missing), or the adapter's `fetch:toolchain-check` failing (the machine lacks
 the pinned toolchain). These are exit codes and action names qqrecipes writes, never output text.
 Product code can exit 126 or 127 too, so an error is never final: a commit the canary could not
-judge 3 times in a row since its last release (`ERROR_LIMIT`; about a day of the schedule plus the
+judge in 3 canary runs since its last release (a re-run of the same run's finish counts once) (`ERROR_LIMIT`; about a day of the schedule plus the
 watchdog) is held, tagged `possible runner fault`, with a failure record and a postmortem draft like
 any hold. Until then it is rerun; a flaky failure can still ship on a green rerun within those 3.
 The same cap ends the loop for a commit that breaks its own `infra/repo.toml` (qqrecipes stops

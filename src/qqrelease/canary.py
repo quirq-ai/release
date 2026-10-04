@@ -53,6 +53,15 @@ SMOKE_EXAMPLES = "1000"
 ERROR_LIMIT = 3
 RUNNER_FAULT = "possible runner fault"
 REASON_LIMIT = 500     # characters of a release's reason or requester kept in the records
+TEXT_LIMIT = 2000      # characters of any worker-derived text kept in a record (S7: an oversized
+                       # record must never make release-state refuse the push)
+DETAIL_LIMIT = 20000   # characters of a stage's log tail
+RUN_IDS_KEPT = 20      # distinct run ids remembered per commit for the error count
+
+
+def _clip(text: Any, limit: int = TEXT_LIMIT) -> str:
+    text = str(text)
+    return text if len(text) <= limit else text[:limit] + f"... ({len(text) - limit} more characters)"
 
 
 @dataclass
@@ -444,16 +453,18 @@ def _stage_rows(stages: dict | None, sel: "Selection") -> list[dict]:
     if not isinstance(stages, dict) or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
         return []
     rows = stages.get("stages")
-    out = []
+    out, seen = [], set()
     for r in rows if isinstance(rows, list) else []:
-        if isinstance(r, dict) and r.get("name") in STAGES:
+        # One row per known stage, the first: the count is bounded however many rows the worker wrote.
+        if isinstance(r, dict) and r.get("name") in STAGES and r["name"] not in seen:
+            seen.add(r["name"])
             try:
                 seconds = round(float(r.get("seconds", 0)), 1)
                 seconds = seconds if math.isfinite(seconds) else 0.0
             except Exception:       # TypeError, ValueError, OverflowError (a 400-digit int)...
                 seconds = 0.0
             out.append({"name": r["name"], "ok": r.get("ok") is True, "ran": r.get("ran") is not False,
-                        "detail": str(r.get("detail", ""))[:20000], "seconds": seconds})
+                        "detail": _clip(r.get("detail", ""), DETAIL_LIMIT), "seconds": seconds})
     return out
 
 
@@ -463,15 +474,19 @@ def verdict(stages: dict | None, sel: Selection) -> tuple[str, str]:
     if not isinstance(stages, dict) or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
         return "missing", "the worker left no stage results for this commit"
     if stages.get("skip"):
-        return "skip", str(stages["skip"])
+        return "skip", _clip(stages["skip"])
     got = [s for s in (stages.get("stages") or []) if isinstance(s, dict)]
+    known = [s.get("name") for s in got if s.get("name") in STAGES]
+    if len(known) != len(set(known)):
+        return "missing", "the stage results name a stage more than once"
     for s in got:
         if s.get("name") in STAGES and s.get("ok") is False:
             if s.get("ran") is False:   # tooling, not the commit: a pipeline error, never a hold
                 return "missing", f"the {s['name']} stage could not run"
             return "fail", s["name"]
     if [s.get("name") for s in got] != list(STAGES) or not all(s.get("ok") is True for s in got):
-        return "missing", "the stage results are incomplete: " + ", ".join(s.get("name", "?") for s in got)
+        return "missing", _clip("the stage results are incomplete: "
+                                + ", ".join(_clip(s.get("name", "?"), 40) for s in got[:10]))
     if not channels.DIGEST.fullmatch(str(stages.get("digest", ""))):
         return "missing", "the stage results name no sha256 artifact digest"
     return "pass", ""
@@ -504,17 +519,24 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
             run.reason = detail
         elif v == "missing":
             run.outcome, run.reason = "error", f"not judged: {detail}; the watchdog runs this day again"
-            # S5: count the errors on this commit since its last release; at the limit, hold it.
+            # S5: count the canary runs that could not judge this commit since its last release; at
+            # the limit, hold it. S8: a run counts once, however often its finish job is re-run
+            # (GitHub re-runs keep the run id); a run with no id (a local run) always counts.
             ep = errors_path(store, sel.repo, sel.commit)
             generation = _releases_of(store, sel.repo, sel.commit)
             try:
                 seen = json.loads(ep.read_text())
-                count = int(seen["count"]) if seen.get("generation") == generation else 0
+                if seen.get("generation") != generation:
+                    raise ValueError("an earlier generation")
+                count = int(seen["count"])
+                runs = [str(r) for r in seen.get("runs", []) if isinstance(r, str)]
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
-                count = 0
-            count += 1
+                count, runs = 0, []
+            if not run_url or run_url not in runs:
+                count += 1
+                runs = (runs + [run_url])[-RUN_IDS_KEPT:] if run_url else runs
             files[ep] = json.dumps({"repo": sel.repo, "commit": sel.commit, "generation": generation,
-                                    "count": count, "last": run.reason, "date": date},
+                                    "count": count, "runs": runs, "last": _clip(run.reason), "date": date},
                                    sort_keys=True, indent=2) + "\n"
             if count >= ERROR_LIMIT:
                 got = _stage_rows(stages, sel)          # only this commit's own results
@@ -548,11 +570,14 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
                 run.outcome = "shipped"
                 run.stages = run.stages + [{"name": "promote", "ok": True, "seconds": 0, "detail": detail}]
                 run.reason = f"shipped {sel.commit[:12]} {run.digest}"
-            except ReleaseError as e:
-                # Not counted towards ERROR_LIMIT: every stage passed, so the commit is not in doubt;
-                # the executor or the state store is, and the job going red says so.
+            except Exception as e:
+                # Any failure here (S8: a reply that could not be read, after the write may have
+                # landed) is the promote's, never the commit's: every stage passed. Not counted
+                # towards ERROR_LIMIT; the executor settles a landed write on the next run.
                 run.outcome = "error"
-                run.reason = f"passed every stage but the promote failed: {e}; the watchdog runs this day again"
+                run.reason = _clip(f"passed every stage but the promote failed: {type(e).__name__}: {e}; "
+                                   "the watchdog runs this day again")
+    run.reason = _clip(run.reason)
     path = run_path(store, sel.repo, date)
     doc = dataclasses.asdict(run)
     if path.is_file():
@@ -561,9 +586,9 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
         # or error, and a hold always goes on top, so the report never hides it.
         prior = json.loads(path.read_text())
         if prior.get("outcome") in TERMINAL and run.outcome != "held":
-            doc = {**prior, "later": prior.get("later", []) + [doc]}
+            doc = {**prior, "later": (prior.get("later", []) + [doc])[-RUN_IDS_KEPT:]}
         else:
-            earlier = prior.pop("earlier", []) + [{k: v for k, v in prior.items() if k != "later"}]
+            earlier = (prior.pop("earlier", []) + [{k: v for k, v in prior.items() if k != "later"}])[-RUN_IDS_KEPT:]
             doc = {**doc, "earlier": earlier}
     files[path] = json.dumps(doc, sort_keys=True, indent=2) + "\n"
     store.save(files, f"canary {sel.repo} {date}: {run.outcome} {sel.commit[:12]}")

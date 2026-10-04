@@ -10,7 +10,8 @@ before returning, so an operation key is published before the effect it guards. 
 is the audit log. Writers of the same files are serialized by concurrency groups (`lkgr` writes
 lkgr pointers; the canary and rollback workflows write channel pointers, channels.json and canary
 records), so two writers never touch the same file. A push that loses a race to the other group is
-rebased onto it and pushed again; a rebase that conflicts is an error, never resolved blindly.
+rebased onto it and pushed again, but only when the other writer touched none of its files; anything
+else is an error, never resolved blindly, and a failed publish resets the worktree to the branch.
 """
 from __future__ import annotations
 
@@ -73,8 +74,20 @@ class Store:
         if self._git("diff", "--cached", "--quiet", check=False).returncode == 0:
             return
         self._git(*IDENTITY, "commit", "-q", "-m", message)
-        if self.push:
+        if not self.push:
+            return
+        try:
             self._publish()
+        except Exception:
+            # S7: a refused commit must not ride along with the next save (another repo's record),
+            # so the worktree goes back to what the branch holds now.
+            self._reset_to_branch()
+            raise
+
+    def _reset_to_branch(self) -> None:
+        self._git("rebase", "--abort", check=False)
+        f = self._git("fetch", "-q", "origin", f"refs/heads/{self.branch}", check=False)
+        self._git("reset", "-q", "--hard", "FETCH_HEAD" if f.returncode == 0 else "HEAD~1", check=False)
 
     def _publish(self, attempts: int = 4) -> None:
         err = ""
@@ -83,13 +96,29 @@ class Store:
             if p.returncode == 0:
                 return
             err = p.stderr.strip()
-            # Lost a race with the other writer group: replay our commit on top of theirs.
-            r = self._git(*IDENTITY, "pull", "-q", "--rebase", "origin", f"refs/heads/{self.branch}", check=False)
+            # Lost a race with another writer: replay our commit on top of theirs, but only if they
+            # touched none of our files (a compare-and-swap per file; a textual merge could combine
+            # two records that each made sense alone into one that does not).
+            self._git("fetch", "-q", "origin", f"refs/heads/{self.branch}")
+            if self._git("merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD", check=False).returncode == 0:
+                return          # our push landed although the client saw a failure
+            base = self._git("rev-parse", "-q", "--verify", "HEAD~1^{commit}", check=False).stdout.strip()
+            if not base:      # our commit is the branch's first: compare with the empty tree
+                base = self._git("hash-object", "-t", "tree", "/dev/null").stdout.strip()
+            ours = self._changed(base, "HEAD")
+            theirs = self._changed(base, "FETCH_HEAD")
+            if ours & theirs:
+                raise ReleaseError(f"could not publish to {self.branch}: another writer changed "
+                                   f"{', '.join(sorted(ours & theirs))} meanwhile (a conflict); run again")
+            r = self._git(*IDENTITY, "rebase", "-q", "FETCH_HEAD", check=False)
             if r.returncode != 0:
-                self._git("rebase", "--abort", check=False)
                 raise ReleaseError(f"could not publish to {self.branch}: rebasing onto another writer's "
                                    f"change conflicted: {r.stderr.strip()}")
         raise ReleaseError(f"could not publish to {self.branch} after {attempts} attempts: {err}")
+
+    def _changed(self, a: str, b: str) -> set[str]:
+        out = self._git("-c", "core.quotePath=false", "diff", "--name-only", "-z", "--no-renames", a, b).stdout
+        return {p for p in out.split("\0") if p}
 
     def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         p = subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True)

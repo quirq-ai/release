@@ -9,8 +9,8 @@
 # Concurrency: a group per held commit, so a release never cancels a pending canary, rollback or
 # another commit's release. GitHub keeps one pending run per group, so a second dispatch for the
 # same commit while one runs and one waits cancels the waiting one: check that your run ran; a retry
-# is safe. Its push to release-state rebases over other writers', and finish never writes a hold
-# record that still holds, so the two cannot both change one record.
+# is safe. Its push to release-state is rebased over another writer's commit only when that commit
+# touched none of the files it writes (Store._publish); otherwise it fails and a retry reads afresh.
 name: canary-release-hold
 run-name: release the canary hold on ${{ inputs.repo }} ${{ inputs.commit }}
 on:

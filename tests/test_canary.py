@@ -479,6 +479,55 @@ def test_finish_survives_unreadable_stage_results_and_keeps_other_holds(world, c
     assert json.loads(canary.errors_path(store, repo, shas[1]).read_text())["count"] == 2
 
 
+def test_a_rerun_of_the_same_run_counts_once_and_a_promote_failure_never(world):
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    for i in range(canary.ERROR_LIMIT + 2):              # the same run's finish job, re-run
+        run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), None, "2026-10-05",
+                            run_url="https://example.invalid/runs/7")
+    assert run.outcome == "error" and not canary.is_held(store, repo, shas[1])
+    assert json.loads(canary.errors_path(store, repo, shas[1]).read_text())["count"] == 1
+
+    class Flaky:                                         # a reply that could not be read
+        def __getattr__(self, name):
+            return getattr(mirror, name)
+
+        def write_ref(self, *a, **kw):
+            raise RuntimeError("reply unreadable")
+
+    lkgr_to(store, mirror, repo, shas[2])
+    for i in range(canary.ERROR_LIMIT):
+        run = canary.finish(cfg, store, Flaky(), canary.select(cfg, store, repo), passed(repo, shas[2]),
+                            "2026-10-06")
+        assert run.outcome == "error" and "promote failed: RuntimeError" in run.reason
+    assert not canary.errors_path(store, repo, shas[2]).exists() and not canary.is_held(store, repo, shas[2])
+
+
+def test_worker_text_is_clipped_before_it_reaches_a_record(world):
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    sel = canary.select(cfg, store, repo)
+    run = canary.finish(cfg, store, mirror, sel, {"repo": repo, "commit": shas[1], "skip": "x" * 10**6},
+                        "2026-10-05")
+    assert run.outcome == "noop" and len(run.reason) < canary.TEXT_LIMIT + 100
+    names = [{"name": "y" * 10**5, "ok": True}] * 50
+    run = canary.finish(cfg, store, mirror, sel, {"repo": repo, "commit": shas[1], "stages": names}, "2026-10-05")
+    assert run.outcome == "error" and len(run.reason) < canary.TEXT_LIMIT + 200
+    assert canary.run_path(store, repo, "2026-10-05").stat().st_size < 50000
+
+
+def test_the_number_of_stage_rows_is_bounded(world):
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    many = {"repo": repo, "commit": shas[1], "digest": "sha256:" + "a" * 64,
+            "stages": [{"name": "build", "ok": False, "detail": "z" * 30000}] * 500}
+    assert canary.verdict(many, canary.select(cfg, store, repo))[0] == "missing"
+    for i in range(canary.ERROR_LIMIT):
+        run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), many, "2026-10-05")
+    assert run.outcome == "held" and len(run.stages) == 1
+    assert canary.run_path(store, repo, "2026-10-05").stat().st_size < 200000
+
+
 def test_a_hold_record_from_before_releases_still_holds(world):
     cfg, store, mirror, repo, shas = world
     lkgr_to(store, mirror, repo, shas[1])
