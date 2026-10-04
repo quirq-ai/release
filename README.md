@@ -213,7 +213,8 @@ bots design):
 
 The state store:
 
-- A push refused for a reason other than a race is retried 4 times, and the error never says why.
+- A push refused for a reason other than a race is retried 4 times as if it were one, and the error
+  does not say it was not one.
 - `_reset_to_branch` falls back to `HEAD~1` when the fetch fails: silent on a root commit, and a
   publish that landed is then reported as failed (the safe side).
 - `save` writes files before `git add`/`commit`, outside the reset; a failure there leaves the
