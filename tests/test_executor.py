@@ -244,6 +244,7 @@ def test_settling_never_writes_a_stale_target(target, store):
 
 def test_settling_without_an_identity_abandons(store):
     mirror = load("github", repos={"demo": "quirq-ai/demo"}, token="")
+    mirror.read_ref = lambda repo, ref: ""
     op = executor.plan(store, "advance", "demo", "lkgr", "a" * 40)
 
     class Crash:
@@ -271,3 +272,25 @@ def test_a_ref_moved_by_someone_else_keeps_the_operation_pending(target, store):
     with pytest.raises(ReleaseError, match="something else moved it"):
         executor.finish_pending(store, mirror, "demo", "lkgr")
     assert store.pointer("demo", "lkgr").pending == op.key
+
+
+def test_a_landed_write_is_found_by_a_run_without_an_identity(target, store):
+    root, shas = target
+    local = load("local", target_root=root)
+    op = executor.plan(store, "advance", "demo", "lkgr", shas[1])
+
+    class Timeout:
+        def write_ref(self, *a):
+            local.write_ref(*a)
+            raise ReleaseError("timed out")
+
+    with pytest.raises(ReleaseError):
+        executor.move(store, Timeout(), op)
+
+    class ReadOnly:
+        read_ref = local.read_ref
+        def can_write(self):
+            return False
+
+    assert executor.finish_pending(store, ReadOnly(), "demo", "lkgr").state == "applied"
+    assert store.pointer("demo", "lkgr").commit == shas[1]

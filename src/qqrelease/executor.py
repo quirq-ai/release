@@ -51,14 +51,13 @@ def finish_pending(store: Store, mirror, repo: str, ref: str, at: str | None = N
     op = store.op(cur.pending)
     if op is None:
         raise ReleaseError(f"{repo} {ref} waits on operation {cur.pending}, which is not in the store")
-    landed = False
-    if mirror.can_write():
-        now_at = mirror.read_ref(repo, ref)
-        if now_at == op.to_commit:
-            landed = True
-        elif now_at not in _expected(cur, op):
-            raise ReleaseError(f"{repo}: {ref} is at {now_at[:12] or '(absent)'}, which neither the pointer "
-                               f"nor its pending operation {op.key[:12]} names; something else moved it")
+    # Reads need no identity (the repos are public), so a write an earlier run made with a token is
+    # found even by a run without one.
+    now_at = mirror.read_ref(repo, ref)
+    landed = now_at == op.to_commit
+    if not landed and mirror.can_write() and now_at not in _expected(cur, op):
+        raise ReleaseError(f"{repo}: {ref} is at {now_at[:12] or '(absent)'}, which neither the pointer "
+                           f"nor its pending operation {op.key[:12]} names; something else moved it")
     if landed:
         op.mirror, op.error = "already there", ""
         return _applied(store, cur, op, at)
