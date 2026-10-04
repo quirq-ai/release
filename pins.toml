@@ -1,0 +1,6 @@
+# Other qq repos this one reads, by pinned commit (never copied). Policy comes from infra-config.
+# TODO(expert): let rollers move these pins.
+
+[infra-config]
+source = "https://github.com/quirq-ai/infra-config"
+commit = "a698da40d6ef9a3d79ccd9393417f094ec935123"   # main after #6
