@@ -1,0 +1,73 @@
+# V0-REL-01: advance lkgr. Every 10 minutes, for each onboarded repo, move `lkgr` to the newest main
+# commit whose post-submit builders (infra-config pipelines.toml) are all green. The executor records
+# each move's operation key on this repo's `release-state` branch before moving anything, then moves
+# the target repo's `lkgr` branch, then records the new pointer:
+#   pointers/<repo>/lkgr.json   (schema qq-pointer/1)
+#   ops/<key>.json              (schema qq-operation/1)
+# Writing `lkgr` in a product repo needs the release executor's identity (gate's qq-release-refs
+# rulesets). TODO(suraj): create it; until then the ref write is skipped and each operation says so.
+name: lkgr
+on:
+  schedule:
+    - cron: "7-59/10 * * * *"   # off the hour: GitHub delays and drops on-the-hour schedules
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash               # -eo pipefail: a failing command before a pipe fails the step
+concurrency:
+  group: release-executor       # every workflow that writes release-state shares this group
+  cancel-in-progress: false
+jobs:
+  lkgr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write           # push this repo's release-state branch only
+      # Post-submit runs are read from the onboarded repos, which are public; github.token only
+      # raises the API rate limit for those reads.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: read the infra-config pin
+        id: pin
+        run: python -c "import tomllib; print('commit=' + tomllib.load(open('pins.toml', 'rb'))['infra-config']['commit'])" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: quirq-ai/infra-config
+          ref: ${{ steps.pin.outputs.commit }}
+          path: .qq/infra-config
+          persist-credentials: false
+      - run: python -m pip install --quiet .
+      - name: open the release-state branch
+        run: |
+          if git ls-remote --exit-code origin refs/heads/release-state > /dev/null; then
+            git fetch --depth 1 origin release-state
+            git worktree add -B release-state .qq/state FETCH_HEAD
+          else
+            git worktree add --orphan -b release-state .qq/state
+          fi
+      - name: list the onboarded repos for the executor token
+        id: repos
+        run: |
+          names=$(qqrelease repos --config .qq/infra-config)
+          [ -n "$names" ] || { echo "::error::no onboarded repos: refusing an unscoped executor token"; exit 1; }
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+      # The release executor identity. Absent until suraj creates it (see the header).
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        id: executor
+        if: vars.QQ_RELEASE_CLIENT_ID != ''
+        with:
+          client-id: ${{ vars.QQ_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.QQ_RELEASE_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.repos.outputs.names }}   # the onboarded repos only
+          permission-contents: write
+      - name: advance lkgr
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          QQ_RELEASE_TOKEN: ${{ steps.executor.outputs.token }}
+        run: qqrelease lkgr --config .qq/infra-config --state .qq/state --publish | tee -a "$GITHUB_STEP_SUMMARY"
