@@ -144,6 +144,12 @@ written), the outcome is `error`: nothing is held, the job goes red, and the day
 run. The day's verdict stays on top of its record (a hold always does) and later runs are kept under `later`;
 rerunning `finish` after a ship records the ship again, never a hold.
 
+Exit codes cannot always tell a broken commit from a broken machine, so the split has two known
+limits in v0. A commit that breaks its own `infra/repo.toml` makes qqrecipes stop before writing
+results, so it reads as `error` and is rerun rather than held (the lkgr gate normally stops such a
+commit first). A runner fault that surfaces as a failing action (a missing toolchain, exit 127) is
+held; whoever triages the hold issue releases it once the machine is fixed.
+
 GitHub may drop a scheduled run, so `canary-watchdog` checks twice a day that every canary repo has
 a verdict or no-op for today and, if one is missing and no canary is in flight, starts `canary` by hand.
 
