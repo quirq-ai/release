@@ -209,8 +209,6 @@ def run_stages(cfg: dict, repo: str, commit: str, src: Path, out: Path, toolchai
 
     def build():
         nonlocal digest
-        if not (src / MANIFEST).is_file():
-            return False, f"{repo} has no {MANIFEST}: not onboarded (V0-ONB-01)"
         rc, recs, tail = _recipes("build", src, out / "build", toolchains)
         if rc != 0:
             return False, "build failed:\n" + tail
@@ -237,6 +235,11 @@ def run_stages(cfg: dict, repo: str, commit: str, src: Path, out: Path, toolchai
             ok, detail = False, "deploy failed:\n" + tail
         return ok, detail
 
+    if not (src / MANIFEST).is_file():
+        # Not onboarded is a state of the repo, not a bad canary: nothing to build, nothing held.
+        return {"schema": STAGES_SCHEMA, "repo": repo, "commit": commit, "digest": "", "date": date,
+                "stages": [], "ok": False, "skip": f"{repo} has no {MANIFEST} at {commit[:12]}: not onboarded "
+                                                  "yet (V0-ONB-01), so there is nothing to build"}
     for name, fn in (("build", build), ("verify", verify), ("fuzz-smoke", fuzz_smoke),
                      ("deploy-probe", deploy_probe)):
         if not stage(name, fn):
@@ -263,7 +266,9 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
                                   "detail": "the worker left no stage results (missing signal: hold)"}],
                       "ok": False, "digest": ""}
         run.stages, run.digest = stages["stages"], stages.get("digest", "")
-        if stages.get("ok"):
+        if stages.get("skip"):
+            run.reason = stages["skip"]
+        elif stages.get("ok"):
             executor.finish_pending(store, mirror, sel.repo, channels.ref_of(CHANNEL), at=at)
             try:
                 op = channels.plan_promote(cfg, store, sel.repo, CHANNEL, sel.commit, run.digest,
@@ -275,7 +280,7 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
                 run.reason = f"shipped {sel.commit[:12]} {run.digest}"
             except ReleaseError as e:
                 run.stages = run.stages + [{"name": "promote", "ok": False, "seconds": 0, "detail": str(e)}]
-        if run.outcome != "shipped":
+        if run.outcome != "shipped" and not stages.get("skip"):
             failed = next((s for s in run.stages if not s["ok"]), {"name": "?", "detail": ""})
             run.outcome = "held"
             run.reason = f"held at {failed['name']}: {failed['detail'].splitlines()[0] if failed['detail'] else ''}"

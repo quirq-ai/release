@@ -141,3 +141,13 @@ def test_artifact_digest_is_stable_and_needs_a_build():
     d = canary.artifact_digest(recs)
     assert d.startswith("sha256:") and d == canary.artifact_digest(list(reversed(recs)))
     assert canary.artifact_digest([recs[1]]) == ""
+
+
+def test_a_repo_without_a_manifest_is_a_noop_not_a_held_canary(world, tmp_path):
+    cfg, store, mirror, repo, shas = world
+    doc = canary.run_stages(cfg, repo, shas[1], tmp_path / "empty", tmp_path / "out", [], "2026-10-05")
+    assert doc["skip"] and not doc["stages"]
+    lkgr_to(store, mirror, repo, shas[1])
+    run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), doc, "2026-10-05")
+    assert run.outcome == "noop" and "not onboarded" in run.reason
+    assert not canary.held_path(store, repo, shas[1]).exists()
