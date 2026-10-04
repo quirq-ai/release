@@ -85,9 +85,9 @@ def plan_promote(cfg: dict, store: Store, repo: str, channel: str, commit: str, 
     at = store.pointer(repo, src)
     if not at.commit:
         raise ReleaseError(f"{repo} has no {src} yet, so there is nothing to promote to {channel}")
-    if commit != at.commit:
-        raise ReleaseError(f"{repo} {channel} takes its build from {src}, which names {at.commit[:12]}, "
-                           f"not {commit[:12]}")
+    if not named_since(store, at, commit):
+        raise ReleaseError(f"{repo} {channel} takes its build from {src}, which names {at.commit[:12]}; "
+                           f"{commit[:12]} is not it, nor an earlier value it moved forward from")
     if src.startswith("channels/") and digest != at.digest:
         raise ReleaseError(f"{repo} {channel} takes its artifact from {src}, which names {at.digest}, "
                            f"not {digest}: only an artifact the channel before vetted moves on")
@@ -104,6 +104,23 @@ def rollback_target(cur: Pointer) -> dict | None:
     """The newest earlier value that differs from the current one and was never rolled back from."""
     bad = {(b["commit"], b["digest"]) for b in cur.rolled_back} | {(cur.commit, cur.digest)}
     return next((h for h in cur.history if (h["commit"], h["digest"]) not in bad), None)
+
+
+def named_since(store: Store, ptr: Pointer, commit: str) -> bool:
+    """Whether `ptr` names `commit` now, or named it earlier and has only moved forward since.
+
+    The canary builds what lkgr named when it started; lkgr may advance during the build, which
+    leaves that commit good. But if lkgr retreated past it (a re-run turned a commit red), it is not
+    known good any more.
+    """
+    if ptr.commit == commit:
+        return True
+    ops_since = [ptr.op]
+    for h in ptr.history:
+        if h["commit"] == commit:
+            return all((op := store.op(k)) is not None and op.kind != "retreat" for k in ops_since)
+        ops_since.append(h["op"])
+    return False
 
 
 def plan_rollback(cfg: dict, store: Store, repo: str, channel: str, reason: str = "",

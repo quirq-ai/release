@@ -1,0 +1,37 @@
+# V0-REL-03 watchdog. GitHub may delay or drop a scheduled run (plan §5.8), so a few hours after the
+# canary's slot this checks that every canary repo has a run record for today on release-state, and
+# starts the canary workflow by hand if one is missing and no canary run is in flight.
+name: canary-watchdog
+on:
+  schedule:
+    - cron: "43 9 * * *"        # 3 h 26 min after the canary's 06:17 slot; off the hour
+    - cron: "43 13 * * *"       # and once more, in case this one was dropped too
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  watchdog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write            # start canary.yml in this repo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/executor
+      - name: start a missed canary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          missing=$(qqrelease canary missing --config .qq/infra-config --state .qq/state)
+          if [ -z "$missing" ]; then echo "today's canary ran for every repo" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          running=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow canary.yml --json status \
+                      --jq '[.[] | select(.status != "completed")] | length')
+          if [ "$running" != "0" ]; then echo "a canary run is in flight; not starting another"; exit 0; fi
+          echo "no canary record today for: $missing; starting canary.yml" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh workflow run canary.yml --repo "$GITHUB_REPOSITORY"
