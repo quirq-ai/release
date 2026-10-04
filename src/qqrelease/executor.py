@@ -31,7 +31,8 @@ def plan(store: Store, kind: str, repo: str, ref: str, to_commit: str, digest: s
                      generation=cur.generation, digest=digest, reason=reason, actor=actor)
 
 
-def finish_pending(store: Store, mirror, repo: str, ref: str, at: str | None = None) -> Operation | None:
+def finish_pending(store: Store, mirror, repo: str, ref: str, at: str | None = None,
+                   derived=None) -> Operation | None:
     """Settle the operation a pointer is waiting on, if any, before planning a new one.
 
     A run can die (or lose its push, or time out on a write that did land) after recording an
@@ -43,6 +44,8 @@ def finish_pending(store: Store, mirror, repo: str, ref: str, at: str | None = N
     - the ref is where the pointer is (or the write could not have happened, with no identity):
       it did not land, so the operation is abandoned and the caller plans again from fresh verdicts;
     - anything else: someone else moved the ref; it stays pending and is reported every run.
+
+    `derived` is as for `move`: more files recorded with the settled pointer.
     """
     at = at or now_iso()
     cur = store.pointer(repo, ref)
@@ -60,7 +63,7 @@ def finish_pending(store: Store, mirror, repo: str, ref: str, at: str | None = N
                            f"nor its pending operation {op.key[:12]} names; something else moved it")
     if landed:
         op.mirror, op.error = "already there", ""
-        return _applied(store, cur, op, at)
+        return _applied(store, cur, op, at, derived)
     op.state, op.error = "abandoned", "did not land; planned again from fresh verdicts"
     store.save({store.op_path(op.key): op.to_json(),
                 store.pointer_path(repo, ref): Pointer.from_dict({**cur.to_dict(), "pending": ""}).to_json()},

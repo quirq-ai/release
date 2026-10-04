@@ -7,8 +7,10 @@ It is a directory, in CI a git worktree of this repo's `release-state` branch:
 
 `save` writes files and, in a git worktree, commits them; with `push` it also pushes the branch
 before returning, so an operation key is published before the effect it guards. The branch history
-is the audit log. Writers are serialized by the workflows' shared concurrency group; a rejected push
-(someone else wrote first) is an error, never retried blindly.
+is the audit log. Writers of the same files are serialized by concurrency groups (`lkgr` writes
+lkgr pointers; the canary and rollback workflows write channel pointers, channels.json and canary
+records), so two writers never touch the same file. A push that loses a race to the other group is
+rebased onto it and pushed again; a rebase that conflicts is an error, never resolved blindly.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ from qqrelease.errors import ReleaseError
 from qqrelease.operations import Operation, Pointer
 
 BRANCH = "release-state"
+IDENTITY = ("-c", "user.name=qq-release", "-c", "user.email=qq-release@quirq.invalid")
 
 
 class Store:
@@ -69,12 +72,24 @@ class Store:
         self._git("add", "--", *[str(p.relative_to(self.root)) for p in files])
         if self._git("diff", "--cached", "--quiet", check=False).returncode == 0:
             return
-        self._git("-c", "user.name=qq-release", "-c", "user.email=qq-release@quirq.invalid",
-                  "commit", "-q", "-m", message)
+        self._git(*IDENTITY, "commit", "-q", "-m", message)
         if self.push:
+            self._publish()
+
+    def _publish(self, attempts: int = 4) -> None:
+        err = ""
+        for _ in range(attempts):
             p = self._git("push", "-q", "origin", f"HEAD:refs/heads/{self.branch}", check=False)
-            if p.returncode != 0:
-                raise ReleaseError(f"could not publish to {self.branch} (another writer?): {p.stderr.strip()}")
+            if p.returncode == 0:
+                return
+            err = p.stderr.strip()
+            # Lost a race with the other writer group: replay our commit on top of theirs.
+            r = self._git(*IDENTITY, "pull", "-q", "--rebase", "origin", self.branch, check=False)
+            if r.returncode != 0:
+                self._git("rebase", "--abort", check=False)
+                raise ReleaseError(f"could not publish to {self.branch}: rebasing onto another writer's "
+                                   f"change conflicted: {r.stderr.strip()}")
+        raise ReleaseError(f"could not publish to {self.branch} after {attempts} attempts: {err}")
 
     def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         p = subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True)

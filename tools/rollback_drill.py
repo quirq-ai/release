@@ -9,6 +9,9 @@ digest), then runs `qqrelease channel rollback` and checks, for each repo:
 - the rollback is a recorded, applied operation;
 - the whole rollback took under 10 minutes (the clock starts at the rollback command).
 
+This is the offline half of the done-when: the executor, the store and a real git ref. The live half
+(job start plus the GitHub write) is bounded by the channel-rollback workflow's 10-minute timeout.
+
     python tools/rollback_drill.py --config .qq/infra-config [--budget-seconds 600]
 """
 from __future__ import annotations
@@ -79,7 +82,8 @@ def main(argv=None) -> int:
             elapsed = time.monotonic() - start
             tip = git("rev-parse", f"refs/heads/channels/{CHANNEL}", cwd=tmp / "targets" / name)
             ptr = store.pointer(name, channels.ref_of(CHANNEL))
-            published = json.loads((state / channels.MANIFEST).read_text())["repos"][name][CHANNEL]
+            published = json.loads((state / channels.MANIFEST).read_text()).get("repos", {}).get(name, {}).get(
+                CHANNEL, {"commit": "", "digest": ""})
             op = store.op(ptr.op)
             checks = {
                 "exit 0": rc == 0,

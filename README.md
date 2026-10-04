@@ -82,8 +82,16 @@ qq channel rollback ...    # the same command in depot's qq (entry point qq.comm
 
 - `promote` only accepts the commit the channel's source names now: canary takes `lkgr`'s, dev
   takes canary's. The daily canary pipeline (V0-REL-03) is what calls it.
-- `rollback` points the channel at its previous commit and digest from the pointer's history.
-  Nothing is rebuilt. The `channel-rollback` workflow runs it on demand.
+- `rollback` points the channel at the newest earlier commit and digest from the pointer's history
+  that it was never rolled back from. Nothing is rebuilt. The value it moves away from is recorded
+  as rolled back: a second rollback goes further back, never forward, and a promotion never ships it
+  again. Retrying a rollback whose write already landed does nothing more. The `channel-rollback`
+  workflow runs it on demand.
+- A promotion that changes nothing is refused. When a channel takes its build from another channel
+  (dev from canary), it takes that channel's digest too, so only a vetted artifact moves on.
+- v0 promotes only channels whose `channels.toml` rules need no person and no signal it cannot read
+  yet (canary). A channel that needs an approval, a soak or health signals (dev, stable) is refused,
+  and so is a rollback whose `[channel.rollback]` needs an approval: held, never done unchecked.
 - After every move, `channels.json` on `release-state` (schema `qq-channels/1`) says what each
   repo's channels name: commit, digest, generation, operation and time. The installer reads it
   (V0-INS-01): `https://raw.githubusercontent.com/quirq-ai/release/release-state/channels.json`.

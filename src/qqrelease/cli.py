@@ -96,11 +96,16 @@ def cmd_repos(args) -> int:
     return 0
 
 
-def _channel_move(args, plan) -> int:
+def _channel_move(args, plan, kind: str) -> int:
     cfg = config.load(Path(args.config))
     store = Store(args.state, push=args.publish)
     mirror = _mirror(args, cfg)
-    executor.finish_pending(store, mirror, args.repo, channels.ref_of(args.channel), at=args.now)
+    settled = channels.settle(store, mirror, args.repo, args.channel, at=args.now)
+    if settled is not None and settled.state == "applied" and settled.kind == kind == "rollback":
+        # A retry of a rollback whose write landed: done, never a second rollback.
+        print(f"the pending rollback {settled.key} landed: {args.repo} {args.channel} names "
+              f"{settled.to_commit[:12]} {settled.digest}; not rolling back again")
+        return 0
     op = plan(cfg, store, mirror.actor())
     op, ptr = channels.apply(store, mirror, op, at=args.now)
     print(f"{op.kind} {op.repo} {op.ref}: {op.from_commit[:12] or '(new)'} -> {ptr.commit[:12]} "
@@ -110,15 +115,18 @@ def _channel_move(args, plan) -> int:
 
 def cmd_promote(args) -> int:
     return _channel_move(args, lambda cfg, store, actor: channels.plan_promote(
-        cfg, store, args.repo, args.channel, args.commit, args.digest, reason=args.reason, actor=actor))
+        cfg, store, args.repo, args.channel, args.commit, args.digest, reason=args.reason, actor=actor),
+        "promote")
 
 
 def cmd_rollback(args) -> int:
     return _channel_move(args, lambda cfg, store, actor: channels.plan_rollback(
-        cfg, store, args.repo, args.channel, reason=args.reason, actor=actor))
+        cfg, store, args.repo, args.channel, reason=args.reason, actor=actor), "rollback")
 
 
 def cmd_show(args) -> int:
+    if not Path(args.state).is_dir():
+        raise ReleaseError(f"{args.state}: no state store here")
     print(json.dumps(channels.manifest(Store(args.state)), sort_keys=True, indent=2))
     return 0
 

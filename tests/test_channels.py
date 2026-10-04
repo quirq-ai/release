@@ -72,8 +72,7 @@ def test_dev_takes_its_build_from_canary(world):
     cfg, store, mirror, repo, shas, _ = world
     assert channels.source_ref(cfg, "canary") == "lkgr"
     assert channels.source_ref(cfg, "dev") == "channels/canary"
-    lkgr_to(store, mirror, repo, shas[1])
-    with pytest.raises(ReleaseError, match="no channels/canary yet"):
+    with pytest.raises(ReleaseError, match="needs approval"):
         channels.plan_promote(cfg, store, repo, "dev", shas[1], D1)
 
 
@@ -123,3 +122,82 @@ def test_cli_rollback_round_trip(world, config_root, tmp_path):
                    "--backend", "local", "--target-root", str(tmp_path / "targets"), "--repo", repo,
                    "--channel", "canary"])
     assert rc == 0 and git("rev-parse", "refs/heads/channels/canary", cwd=d) == shas[1]
+
+
+
+def ship(cfg, store, mirror, repo, sha, dig):
+    lkgr_to(store, mirror, repo, sha)
+    return channels.apply(store, mirror, channels.plan_promote(cfg, store, repo, "canary", sha, dig))
+
+
+def test_rolling_back_twice_goes_further_back_never_forward(world):
+    cfg, store, mirror, repo, shas, d = world
+    D3 = "sha256:" + "3" * 64
+    for sha, dig in zip(shas, (D1, D2, D3)):
+        ship(cfg, store, mirror, repo, sha, dig)
+    channels.apply(store, mirror, channels.plan_rollback(cfg, store, repo, "canary"))
+    _, ptr = channels.apply(store, mirror, channels.plan_rollback(cfg, store, repo, "canary"))
+    assert (ptr.commit, ptr.digest) == (shas[0], D1)
+    with pytest.raises(ReleaseError, match="no previous value"):
+        channels.plan_rollback(cfg, store, repo, "canary")
+
+
+def test_a_rolled_back_commit_is_not_shipped_again(world):
+    cfg, store, mirror, repo, shas, d = world
+    ship(cfg, store, mirror, repo, shas[0], D1)
+    ship(cfg, store, mirror, repo, shas[1], D2)
+    channels.apply(store, mirror, channels.plan_rollback(cfg, store, repo, "canary"))
+    with pytest.raises(ReleaseError, match="rolled back from"):
+        channels.plan_promote(cfg, store, repo, "canary", shas[1], D2)
+
+
+def test_a_promotion_that_changes_nothing_is_refused(world):
+    cfg, store, mirror, repo, shas, d = world
+    ship(cfg, store, mirror, repo, shas[0], D1)
+    with pytest.raises(ReleaseError, match="already names"):
+        channels.plan_promote(cfg, store, repo, "canary", shas[0], D1)
+
+
+def test_retrying_a_rollback_whose_write_landed_does_not_roll_back_again(world, config_root, tmp_path):
+    cfg, store, mirror, repo, shas, d = world
+    ship(cfg, store, mirror, repo, shas[0], D1)
+    ship(cfg, store, mirror, repo, shas[1], D2)
+    op = channels.plan_rollback(cfg, store, repo, "canary")
+
+    class Timeout:
+        def write_ref(self, *a):
+            mirror.write_ref(*a)
+            raise ReleaseError("timed out")
+
+    with pytest.raises(ReleaseError):
+        channels.apply(store, Timeout(), op)
+    rc = cli.main(["channel", "rollback", "--config", str(config_root), "--state", str(store.root),
+                   "--backend", "local", "--target-root", str(tmp_path / "targets"), "--repo", repo,
+                   "--channel", "canary"])
+    ptr = store.pointer(repo, "channels/canary")
+    assert rc == 0 and (ptr.commit, ptr.digest) == (shas[0], D1)
+    assert git("rev-parse", "refs/heads/channels/canary", cwd=d) == shas[0]
+    published = json.loads((store.root / "channels.json").read_text())["repos"][repo]["canary"]
+    assert published["commit"] == shas[0]          # settling rewrites the manifest too
+
+
+def test_rules_that_need_a_person_or_a_signal_are_refused(world):
+    cfg, store, *_ = world
+    for name in ("dev", "stable"):
+        with pytest.raises(ReleaseError, match="v0 cannot check"):
+            channels.check_automatic(cfg, name)
+    channels.check_automatic(cfg, "canary")
+    cfg["channels"]["channel"][2].setdefault("rollback", {})["approval"] = "human-owner"
+    stable = cfg["channels"]["channel"][2]["name"]
+    with pytest.raises(ReleaseError, match="needs approval"):
+        channels.plan_rollback(cfg, store, world[3], stable)
+
+
+def test_dev_only_takes_the_artifact_canary_vetted(world):
+    cfg, store, mirror, repo, shas, d = world
+    ship(cfg, store, mirror, repo, shas[0], D1)
+    dev = next(c for c in cfg["channels"]["channel"] if c["name"] == "dev")
+    dev["promotion"] = {"approval": "none"}          # as if v1's checks existed
+    with pytest.raises(ReleaseError, match="only an artifact the channel before vetted"):
+        channels.plan_promote(cfg, store, repo, "dev", shas[0], D2)
+    assert channels.plan_promote(cfg, store, repo, "dev", shas[0], D1).to_commit == shas[0]

@@ -2,7 +2,8 @@
 # `qqrelease channel rollback` records the operation key on release-state, moves the target repo's
 # `channels/<name>` ref back (compare-and-swap) and records the pointer and channels.json. Nothing is
 # rebuilt, so this takes as long as the job takes to start. The drill in presubmit
-# (tools/rollback_drill.py) proves the restore and its time budget on every change.
+# (tools/rollback_drill.py) proves the restore and its time budget offline on every change; the
+# live half (job start plus the GitHub write) is this workflow's own 10-minute timeout.
 # The ref write needs the release executor identity; TODO(suraj): create it (see lkgr.yml).
 name: channel-rollback
 run-name: roll ${{ inputs.repo }} ${{ inputs.channel }} back
@@ -28,7 +29,7 @@ defaults:
   run:
     shell: bash
 concurrency:
-  group: release-executor       # every workflow that writes release-state shares this group
+  group: release-channels       # every writer of channel pointers; lkgr runs never cancel a rollback
   cancel-in-progress: false
 jobs:
   rollback:
@@ -41,7 +42,10 @@ jobs:
       - uses: ./.github/actions/executor
       - name: list the onboarded repos for the executor token
         id: repos
-        run: echo "names=$(qqrelease repos --config .qq/infra-config)" >> "$GITHUB_OUTPUT"
+        run: |
+          names=$(qqrelease repos --config .qq/infra-config)
+          [ -n "$names" ] || { echo "::error::no onboarded repos: refusing an unscoped executor token"; exit 1; }
+          echo "names=$names" >> "$GITHUB_OUTPUT"
       # The release executor identity. Absent until suraj creates it (see the header).
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
         id: executor
