@@ -229,3 +229,24 @@ def test_dev_only_takes_the_artifact_canary_vetted(world):
     with pytest.raises(ReleaseError, match="only an artifact the channel before vetted"):
         channels.plan_promote(cfg, store, repo, "dev", shas[0], D2)
     assert channels.plan_promote(cfg, store, repo, "dev", shas[0], D1).to_commit == shas[0]
+
+
+def test_canary_may_ship_what_lkgr_named_when_it_started(world):
+    """lkgr advanced during the build: the built commit is still known good."""
+    cfg, store, mirror, repo, shas, _ = world
+    lkgr_to(store, mirror, repo, shas[1])
+    lkgr_to(store, mirror, repo, shas[2])
+    _, ptr = channels.apply(store, mirror, channels.plan_promote(cfg, store, repo, "canary", shas[1], D1))
+    assert ptr.commit == shas[1]
+
+
+def test_canary_may_not_ship_a_commit_lkgr_retreated_from(world):
+    cfg, store, mirror, repo, shas, _ = world
+    lkgr_to(store, mirror, repo, shas[1])
+    lkgr_to(store, mirror, repo, shas[2])
+    executor.move(store, mirror, executor.plan(store, "retreat", repo, "lkgr", shas[1]))
+    with pytest.raises(ReleaseError, match="not it"):
+        channels.plan_promote(cfg, store, repo, "canary", shas[2], D1)
+    lkgr_to(store, mirror, repo, shas[2])          # forward again: shas[1] is behind a retreat
+    with pytest.raises(ReleaseError, match="not it"):
+        channels.plan_promote(cfg, store, repo, "canary", shas[0], D1)

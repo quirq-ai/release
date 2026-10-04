@@ -1,0 +1,213 @@
+# V0-REL-03: the daily canary (plan §5.8). Agents alone, no approval, test environments only.
+#   plan    stage 1, select: lkgr's commit per canary repo, or a recorded no-op
+#   stages  stages 2-6 per repo, read-only: build, verify, fuzz smoke (property tests), deploy, probe
+#   finish  stage 7 under the executor's lock: promote channels/canary, or hold; one run record per
+#           repo per day on release-state (canary/<repo>/runs/<date>.json), read by the daily report
+#   held    per held canary: a failure record (test-pipelines) and a postmortem draft issue
+# The schedule must equal infra-config channels.toml's canary schedule (a test checks it). GitHub can
+# drop a scheduled run, so canary-watchdog.yml starts this workflow if a day has no run record.
+name: canary
+on:
+  schedule:
+    - cron: "17 6 * * *"        # channels.toml [[channel]] canary schedule; off the hour
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: canary
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      date: ${{ steps.plan.outputs.date }}
+      build: ${{ steps.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/executor
+      - name: select (stage 1)
+        id: plan
+        run: |
+          date=$(date -u +%F)
+          qqrelease canary plan --config .qq/infra-config --state .qq/state --out plan.json > /dev/null
+          echo "date=$date" >> "$GITHUB_OUTPUT"
+          echo "build=$(jq -c '[.[] | select(.action == "build")]' plan.json)" >> "$GITHUB_OUTPUT"
+          jq -r '.[] | "- \(.repo): \(.action): \(.reason)"' plan.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: canary-plan
+          path: plan.json
+          if-no-files-found: error
+
+  stages:
+    needs: plan
+    if: needs.plan.outputs.build != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.build) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/executor
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ matrix.slug }}
+          ref: ${{ matrix.commit }}
+          path: .qq/src
+          persist-credentials: false
+      # Toolchains at the versions the repo's manifest pins, read through sync.
+      # TODO(expert): fetch the pinned toolchains through depot (qq fetch) once quirq-ai/toolchains'
+      # packages are public, instead of GitHub's setup actions.
+      - name: read the manifest's toolchain pins
+        id: tc
+        run: qqrelease canary toolchains --src .qq/src | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        id: python
+        if: steps.tc.outputs.python != ''
+        with:
+          python-version: ${{ steps.tc.outputs.python }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        if: steps.tc.outputs.node != ''
+        with:
+          node-version: ${{ steps.tc.outputs.node }}
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6.0.10
+        if: steps.tc.outputs.node != ''
+        with:
+          version: "11.28.2"   # the pnpm quirq-ai/toolchains bundles with Node 24 (V0-TCH-02)
+      - name: build, verify, fuzz smoke, deploy and probe (stages 2-6)
+        env:
+          REPO: ${{ matrix.repo }}
+          COMMIT: ${{ matrix.commit }}
+          DATE: ${{ needs.plan.outputs.date }}
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
+        run: |
+          tc=()
+          [ -z "$PYTHON_PATH" ] || tc+=(--toolchain "python=$(dirname "$(dirname "$PYTHON_PATH")")")
+          qqrelease canary stages --config .qq/infra-config --repo "$REPO" --commit "$COMMIT" \
+            --src .qq/src --out ".qq/canary/$REPO" --date "$DATE" "${tc[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: quirq-ai/test-pipelines/sink@1e3ddb19c7611527f5e231ab63d4cda8c0f68781
+        if: always()
+        with:
+          junit: .qq/canary/**/junit/*.xml
+          kind: canary
+          name: ${{ matrix.repo }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: canary-stages-${{ matrix.repo }}
+          path: .qq/canary/${{ matrix.repo }}/stages.json
+          if-no-files-found: warn   # finish records a missing file as a held canary
+
+  finish:
+    needs: [plan, stages]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: release-channels   # every writer of channel pointers (canary, channel-rollback)
+      cancel-in-progress: false
+    permissions:
+      contents: write           # push this repo's release-state branch only
+    outputs:
+      held: ${{ steps.finish.outputs.held }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: ./.github/actions/executor
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: canary-*
+          path: .qq/dl
+      - name: collect stage results
+        run: |
+          mkdir -p .qq/stages
+          for d in .qq/dl/canary-stages-*; do
+            [ -d "$d" ] && mv "$d" ".qq/stages/${d#.qq/dl/canary-stages-}"
+          done
+          true
+      - name: list the onboarded repos for the executor token
+        id: repos
+        run: |
+          names=$(qqrelease repos --config .qq/infra-config)
+          [ -n "$names" ] || { echo "::error::no onboarded repos: refusing an unscoped executor token"; exit 1; }
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+      # The release executor identity. Absent until suraj creates it (TODO(suraj), see lkgr.yml).
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        id: executor
+        if: vars.QQ_RELEASE_CLIENT_ID != ''
+        with:
+          client-id: ${{ vars.QQ_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.QQ_RELEASE_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.repos.outputs.names }}
+          permission-contents: write
+      - name: promote or hold (stage 7) and record the day
+        id: finish
+        env:
+          QQ_RELEASE_TOKEN: ${{ steps.executor.outputs.token }}
+          DATE: ${{ needs.plan.outputs.date }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # One repo's error must not lose another repo's hold: write `held` whatever the exit code.
+          rc=0
+          qqrelease canary finish --config .qq/infra-config --state .qq/state --publish \
+            --plan .qq/dl/canary-plan/plan.json --stages-dir .qq/stages --held-out held.json \
+            --date "$DATE" --run-url "$RUN_URL" | tee -a "$GITHUB_STEP_SUMMARY" || rc=$?
+          if [ -f held.json ]; then echo "held=$(cat held.json)" >> "$GITHUB_OUTPUT"; fi
+          exit "$rc"
+
+  held:
+    needs: [plan, finish]
+    if: always() && needs.finish.outputs.held != '' && needs.finish.outputs.held != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read            # checkout and the executor's ls-remote
+      issues: write             # the failure record's issue and the postmortem draft, in this repo
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.finish.outputs.held) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/executor
+      - uses: quirq-ai/test-pipelines/failure@1e3ddb19c7611527f5e231ab63d4cda8c0f68781
+        id: failure
+        with:
+          kind: canary-held
+          subject: ${{ matrix.digest || matrix.commit }}
+          summary: ${{ matrix.summary }}
+          channel: canary
+          build-digest: ${{ matrix.digest }}
+          last-good: ${{ matrix.previous }}
+          first-bad: ${{ matrix.commit }}
+          stage: ${{ matrix.stage }}
+      - name: postmortem draft (postmortem.toml canary-deploy-failed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ matrix.repo }}
+          DATE: ${{ needs.plan.outputs.date }}
+          FAILURE_ISSUE: ${{ steps.failure.outputs.issue }}
+          COMMIT: ${{ matrix.commit }}
+        run: |
+          title="Postmortem draft: canary held for $REPO ${COMMIT:0:12} on $DATE"
+          if [ -n "$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --label postmortem \
+                --search "\"$title\" in:title" --json number --jq '.[0].number')" ]; then
+            echo "already drafted"; exit 0
+          fi
+          qqrelease canary postmortem --config .qq/infra-config --state .qq/state --repo "$REPO" \
+            --date "$DATE" --commit "$COMMIT" --failure-issue "$FAILURE_ISSUE" > postmortem.md
+          gh label create postmortem --repo "$GITHUB_REPOSITORY" --color B60205 \
+            --description "postmortem draft (infra-config postmortem.toml)" 2>/dev/null || true
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label postmortem --body-file postmortem.md

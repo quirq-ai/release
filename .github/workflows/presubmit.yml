@@ -14,12 +14,13 @@ defaults:
 jobs:
   presubmit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        id: python
         with:
           python-version: "3.14"
       - name: read the infra-config pin
@@ -31,9 +32,27 @@ jobs:
           ref: ${{ steps.pin.outputs.commit }}
           path: .qq/infra-config
           persist-credentials: false
+      - name: read the gate pin
+        id: gatepin
+        run: python -c "import tomllib; print('commit=' + tomllib.load(open('pins.toml', 'rb'))['gate']['commit'])" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: quirq-ai/gate
+          ref: ${{ steps.gatepin.outputs.commit }}
+          path: .qq/gate
+          persist-credentials: false
+      - name: core code names no language, build tool or deploy target (gate's agnosticism guard)
+        run: |
+          python -m venv .qq/gate-venv
+          .qq/gate-venv/bin/pip install --quiet -e .qq/gate
+          .qq/gate-venv/bin/qqgate guard --repo release --github .
       - run: python -m pip install --quiet -e ".[test]"
       - run: python -m pytest -q -p no:cacheprovider
       - name: lkgr moves on its own and never names a red commit (V0-REL-01 done-when, offline half)
         run: python tools/lkgr_demo.py --config .qq/infra-config
       - name: a rollback drill restores the previous canary in under 10 min (V0-REL-02 done-when)
         run: python tools/rollback_drill.py --config .qq/infra-config --budget-seconds 600
+      - name: 7 daily canaries with no human touch, and a planted bad canary is held (V0-REL-03 done-when, offline half)
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
+        run: python tests/canary_demo.py --config .qq/infra-config --toolchain "python=$(dirname "$(dirname "$PYTHON_PATH")")"

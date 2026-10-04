@@ -101,13 +101,53 @@ qq channel rollback ...    # the same command in depot's qq (entry point qq.comm
 that the ref, the pointer and `channels.json` all name the previous canary again, within 10
 minutes. Presubmit runs it on every change.
 
+## The daily canary (V0-REL-03)
+
+The `canary` workflow runs daily at the canary schedule in infra-config `channels.toml` (off the
+hour), for every repo with a canary release builder in `pipelines.toml`. Stages, in order; the
+first failure holds the canary and the previous one stays in place:
+
+| Stage | What | Where |
+|---|---|---|
+| select | lkgr's commit. Already the canary, held before, or no lkgr yet: a recorded no-op | `plan` job |
+| build | every target through its adapter (recipes, pinned); the artifact digest names the build actions and their outputs | `stages` job, read-only |
+| verify | the full test suites | `stages` |
+| fuzz smoke | property tests only (until V1-REL-02 adds fuzzers): the suites again with 1,000 examples and a daily seed | `stages` |
+| deploy, probe | start the artifact in the canary test environment (recipes' deploy; in v0 the runner) and probe it. Every `health.toml` probe for the repo must have run and passed: a probe that did not run is a missing signal, so the canary is held | `stages` |
+| promote | the executor moves `channels/canary` to the commit and digest, recording the operation key first | `finish` job, under the `release-channels` lock |
+
+Every run leaves `canary/<repo>/runs/<date>.json` (schema `qq-canary-run/1`) on `release-state`, and
+a held commit leaves `canary/<repo>/held/<commit>.json` so it is never retried; the next canary
+waits for lkgr to move. Each held canary gets a failure record mirrored to a `qq-failure` issue
+(test-pipelines' `failure` action, V0-TST-04) and a postmortem draft issue labelled `postmortem`
+from infra-config's template (trigger `canary-deploy-failed`); v0 fills it from captured evidence,
+and an agent completes it in v1. Stage results go to the results store through the sink (run kind
+`canary`).
+
+Only a stage's verdict holds a commit. `finish` recomputes it from the stage results itself (all four
+stages, in order, passing, with a `sha256:` digest), since the worker runs product code. When the
+pipeline itself fails (a lost worker, missing or incomplete results, a promote that could not be
+written), the outcome is `error`: nothing is held, the job goes red, and the day counts as not yet
+run. The day's verdict stays on top of its record (a hold always does) and later runs are kept under `later`;
+rerunning `finish` after a ship records the ship again, never a hold.
+
+GitHub may drop a scheduled run, so `canary-watchdog` checks twice a day that every canary repo has
+a verdict or no-op for today and, if one is missing and no canary is in flight, starts `canary` by hand.
+
+`tests/canary_demo.py` plays eight days against a fixture service (`tests/fixtures/canary_app`): seven
+ship with no human touch, and a planted bad canary (its `/health` answers 500) is held at
+deploy-probe with the previous canary kept. Presubmit runs it.
+
+Until onboarding lands `infra/repo.toml` in xo-space and innernet (V0-ONB-01) and their post-submit
+builders make an lkgr (xo-space #211, innernet #37), each day's record is a no-op saying why.
+
 ## v0 status
 
 | Item | What | PR | State |
 |---|---|---|---|
-| V0-REL-01 | `lkgr` ref | #2 | in review |
-| V0-REL-02 | Channel pointers and rollback | #3 | in review |
-| V0-REL-03 | Daily canary pipeline v0 | | waits on V0-TST-04 |
+| V0-REL-01 | `lkgr` ref | #2 | merged |
+| V0-REL-02 | Channel pointers and rollback | #3 | merged |
+| V0-REL-03 | Daily canary pipeline v0 | #4 | in review |
 | V0-REL-04 | Daily canary report | | waits on V0-REL-03 |
 
 Out of scope for v0: soak, automatic rollback, the fuzz stage, the dev channel and PostHog (v1);

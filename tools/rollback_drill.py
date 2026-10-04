@@ -12,7 +12,7 @@ digest), then runs `qqrelease channel rollback` and checks, for each repo:
 This is the offline half of the done-when: the executor, the store and a real git ref. The live half
 (job start plus the GitHub write) is bounded by the channel-rollback workflow's 10-minute timeout.
 
-    python tools/rollback_drill.py --config .qq/infra-config [--budget-seconds 600]
+    tools/rollback_drill.py --config .qq/infra-config [--budget-seconds 600]
 """
 from __future__ import annotations
 

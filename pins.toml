@@ -4,3 +4,7 @@
 [infra-config]
 source = "https://github.com/quirq-ai/infra-config"
 commit = "a698da40d6ef9a3d79ccd9393417f094ec935123"   # main after #6
+
+[gate]
+source = "https://github.com/quirq-ai/gate"
+commit = "3b4250c05b6d629e048c2f760beb9ab4d3e2c251"   # main after #8: the agnosticism guard (V0-GAT-02)

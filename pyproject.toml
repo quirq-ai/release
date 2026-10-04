@@ -12,7 +12,11 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 # The gardener's verdicts and config reader, pinned by commit (never copied).
 dependencies = [
+    # Hold this pin: at bad853c the "backfill ran from main" check is in gardener's tree status, not
+    # its backend, which lkgr calls. Move it only after gardener moves that check into the backend.
     "qqgarden @ git+https://github.com/quirq-ai/gardener@bad853c0464e0e56ae894ff3795cbb3e5e24ba48",
+    # The canary's build, test and deploy stages run through the adapters (V0-REC-04, V0-REC-05).
+    "qqrecipes @ git+https://github.com/quirq-ai/recipes@ab25f8c5b172c1357337e8afdf97d67338d43f46",
 ]
 
 [project.optional-dependencies]
@@ -31,3 +35,4 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
+norecursedirs = ["fixtures"]   # the canary demo's fixture app has its own tests

@@ -4,8 +4,8 @@
 # rebuilt, so this takes as long as the job takes to start. The drill in presubmit
 # (tools/rollback_drill.py) proves the restore and its time budget offline on every change; the
 # live half (job start plus the GitHub write) is this workflow's own 10-minute timeout.
-# Queued runs: GitHub keeps one pending run per concurrency group, so a third dispatch while one
-# runs and one waits cancels the waiting one. Check that your run ran; pass `from` so a re-run or a
+# Queued runs: GitHub keeps one pending run per concurrency group (`release-channels`, shared with the
+# canary's finish job), so a run that joins while one runs and one waits cancels the waiting one. Check that your run ran; pass `from` so a re-run or a
 # double dispatch is refused instead of rolling back twice.
 # The ref write needs the release executor identity; TODO(suraj): create it (see lkgr.yml).
 name: channel-rollback

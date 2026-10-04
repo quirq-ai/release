@@ -1,0 +1,22 @@
+# The canary fixture's manifest. tests/canary_demo.py fills in the Python it runs on.
+schema = "quirq-repo/1"
+
+[qq]
+version = "0.1.0"
+
+[toolchains.python]
+version = "@PYTHON_VERSION@"
+source = "https://example.invalid/python-@PYTHON_VERSION@.tar.zst"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[[targets]]
+name = "server"
+kind = "python-service"
+srcs = ["server.py", "greet.py", "requirements.txt"]
+params = { ready_path = "/greet", probes = ["/health", "/greet?name=qq"] }
+
+[[targets]]
+name = "tests"
+kind = "pytest"
+srcs = ["tests/**", "requirements-dev.txt"]
+deps = ["server"]

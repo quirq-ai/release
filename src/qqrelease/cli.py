@@ -9,7 +9,9 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,7 +20,7 @@ from qqgarden import backends as garden_backends
 from qqgarden.errors import GardenerError
 from qqgarden.postsubmit import parse_time
 
-from qqrelease import backends, channels, config, executor, lkgr
+from qqrelease import backends, canary, channels, config, executor, lkgr
 from qqrelease.errors import ReleaseError
 from qqrelease.store import Store
 
@@ -174,6 +176,145 @@ def add_channel(sub) -> None:
     s.set_defaults(func=cmd_show)
 
 
+def _today(args) -> str:
+    return args.date or datetime.now(timezone.utc).date().isoformat()
+
+
+def cmd_canary_plan(args) -> int:
+    """Stage 1 for every canary repo, as JSON: [{repo, slug, action, commit, previous, reason}]."""
+    cfg = config.load(Path(args.config))
+    store = Store(args.state)
+    slugs = {r.name: r.slug for r in config.repos(cfg)}
+    plan = [{**dataclasses.asdict(canary.select(cfg, store, name)), "slug": slugs.get(name, "")}
+            for name in canary.canary_repos(cfg)]
+    text = json.dumps(plan, sort_keys=True)
+    if args.out:
+        Path(args.out).write_text(text + "\n")
+    print(text)
+    return 0
+
+
+def cmd_canary_stages(args) -> int:
+    """Stages 2-6 on a worker; writes <out>/stages.json whatever happens."""
+    cfg = config.load(Path(args.config))
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    doc = canary.run_stages(cfg, args.repo, args.commit, Path(args.src), out, args.toolchain, _today(args))
+    (out / "stages.json").write_text(json.dumps(doc, sort_keys=True, indent=2) + "\n")
+    for st in doc["stages"]:
+        first = st["detail"].splitlines()[0] if st["detail"] else ""
+        print(f"{'PASS' if st['ok'] else 'FAIL'} {st['name']} ({st['seconds']} s) {first}")
+    return 0
+
+
+def cmd_canary_finish(args) -> int:
+    """Stage 7 and the day's records, under the executor's lock."""
+    cfg = config.load(Path(args.config))
+    store = Store(args.state, push=args.publish)
+    mirror = _mirror(args, cfg)
+    plan = json.loads(Path(args.plan).read_text())
+    date = _today(args)
+    held, rc = [], 0
+    lines = [f"# Canary {date}", "", "| Repo | Outcome | Commit | Digest | Why |", "|---|---|---|---|---|"]
+    for item in plan:
+        sel = canary.Selection(**{k: item[k] for k in ("repo", "action", "commit", "previous", "reason")})
+        stages = None
+        f = Path(args.stages_dir) / sel.repo / "stages.json"
+        if f.is_file():
+            stages = json.loads(f.read_text())
+        try:
+            run = canary.finish(cfg, store, mirror, sel, stages, date, run_url=args.run_url, at=args.now)
+        except ReleaseError as e:
+            rc = 2
+            print(f"::error::{sel.repo}: {e}", file=sys.stderr)
+            lines.append(f"| {sel.repo} | **error** | | | {' '.join(str(e).replace('|', '/').split())} |")
+            continue
+        if run.outcome == "error":
+            rc = 2                      # the job goes red; the watchdog runs the day again
+            print(f"::error::{sel.repo}: {run.reason}", file=sys.stderr)
+        if run.outcome == "held":
+            held.append({"repo": run.repo, "commit": run.commit, "previous": run.previous,
+                         "digest": run.digest, "stage": next(s["name"] for s in run.stages if s.get("ok") is False),
+                         "summary": f"Canary held for {run.repo}: {run.reason}"[:200]})
+        why = " ".join(run.reason.replace("|", "/").split())
+        lines.append(f"| {run.repo} | **{run.outcome}** | {run.commit[:12]} | {run.digest[:19]} | {why} |")
+    if args.held_out:
+        Path(args.held_out).write_text(json.dumps(held, sort_keys=True) + "\n")
+    print("\n".join(lines))
+    return rc
+
+
+def cmd_canary_missing(args) -> int:
+    cfg = config.load(Path(args.config))
+    print(",".join(canary.missing_runs(cfg, Store(args.state), _today(args))))
+    return 0
+
+
+def cmd_canary_postmortem(args) -> int:
+    store = Store(args.state)
+    found = [r for r in canary.runs_on(store, args.repo, _today(args))
+             if r.get("outcome") == "held" and (not args.commit or r.get("commit") == args.commit)]
+    if not found:
+        raise ReleaseError(f"no held canary run for {args.repo} {args.commit[:12]} on {_today(args)}")
+    run = canary.CanaryRun.from_dict(found[0])
+    print(canary.postmortem_draft(Path(args.config), run, args.failure_issue), end="")
+    return 0
+
+
+def cmd_canary_toolchains(args) -> int:
+    """`name=version` lines for the toolchains a checkout's manifest pins (for a workflow's outputs)."""
+    if not (Path(args.src) / canary.MANIFEST).is_file():
+        return 0          # not onboarded: the build stage says so
+    for name, version in canary.toolchain_versions(Path(args.src)).items():
+        # Product-controlled text going into $GITHUB_OUTPUT: one plain token per line, or nothing.
+        if re.fullmatch(r"[A-Za-z0-9_.-]+", name) and re.fullmatch(r"[A-Za-z0-9_.+-]+", version):
+            print(f"{name}={version}")
+    return 0
+
+
+def add_canary(sub) -> None:
+    c = sub.add_parser("canary", help="the daily canary pipeline (V0-REL-03)")
+    csub = c.add_subparsers(dest="canary_cmd", required=True)
+    s = csub.add_parser("plan", help="stage 1 (select) for every canary repo, as JSON")
+    s.add_argument("--config", required=True)
+    s.add_argument("--state", required=True)
+    s.add_argument("--out", help="also write the JSON here")
+    s.set_defaults(func=cmd_canary_plan)
+    s = csub.add_parser("stages", help="stages 2-6 (build, verify, fuzz smoke, deploy and probe)")
+    s.add_argument("--config", required=True)
+    s.add_argument("--repo", required=True)
+    s.add_argument("--commit", required=True)
+    s.add_argument("--src", required=True, help="a checkout of --commit")
+    s.add_argument("--out", required=True, help="results directory; stages.json goes here")
+    s.add_argument("--toolchain", action="append", default=[], metavar="NAME=ROOT")
+    s.add_argument("--date")
+    s.set_defaults(func=cmd_canary_stages)
+    s = csub.add_parser("finish", help="stage 7 (promote) and the day's records")
+    _common(s)
+    s.add_argument("--plan", required=True, help="the JSON `canary plan` wrote")
+    s.add_argument("--stages-dir", required=True, help="holds <repo>/stages.json from each worker")
+    s.add_argument("--held-out", help="write the held canaries here, as JSON")
+    s.add_argument("--run-url", default="")
+    s.add_argument("--date")
+    s.set_defaults(func=cmd_canary_finish)
+    s = csub.add_parser("toolchains", help="name=version for each toolchain the manifest pins")
+    s.add_argument("--src", required=True)
+    s.set_defaults(func=cmd_canary_toolchains)
+    s = csub.add_parser("missing", help="canary repos with no run record for the day (the watchdog)")
+    s.add_argument("--config", required=True)
+    s.add_argument("--state", required=True)
+    s.add_argument("--date")
+    s.set_defaults(func=cmd_canary_missing)
+    s = csub.add_parser("postmortem", help="a postmortem draft for the day's held canary")
+    s.add_argument("--config", required=True)
+    s.add_argument("--state", required=True)
+    s.add_argument("--repo", required=True)
+    s.add_argument("--date")
+    s.add_argument("--commit", default="", help="the held commit (the day may hold one and ship another)")
+    s.add_argument("--failure-issue", default="")
+    s.set_defaults(func=cmd_canary_postmortem)
+
+
 def guarded(func, args) -> int:
     try:
         return func(args)
@@ -210,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--config", required=True)
     s.set_defaults(func=cmd_repos)
     add_channel(sub)
+    add_canary(sub)
 
     args = p.parse_args(argv)
     return guarded(args.func, args)
