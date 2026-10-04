@@ -215,7 +215,8 @@ jobs:
 
   report:
     needs: [plan, finish, held]
-    if: always() && needs.finish.result == 'success'
+    # Also after a red finish (a repo's pipeline error): those are the days the report matters most.
+    if: always() && needs.plan.result == 'success' && needs.finish.result != 'skipped' && needs.finish.result != 'cancelled'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:

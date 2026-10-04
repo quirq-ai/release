@@ -18,6 +18,8 @@ canary: its /health answers 500, which a health.toml probe requires. Checks:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -116,7 +118,9 @@ def main(argv=None) -> int:
                            "--held-out", str(work / "held.json"), "--date", d])
             if rc != 0:
                 failures.append(f"{d}: canary finish exited {rc}")
-            if cli.main(["canary", "report", *common, "--date", d]) != 0:
+            with contextlib.redirect_stdout(io.StringIO()):              # the report text is checked below
+                rc = cli.main(["canary", "report", *common, "--date", d])
+            if rc != 0:
                 failures.append(f"{d}: canary report failed")
             canary_now = store.pointer(repo, "channels/canary")
             run = json.loads(canary.run_path(store, repo, d).read_text())
