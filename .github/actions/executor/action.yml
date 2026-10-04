@@ -1,0 +1,32 @@
+# Everything a release executor job needs before it acts: Python, infra-config at the pins.toml
+# commit (.qq/infra-config), qqrelease, and a worktree of the release-state branch (.qq/state).
+# Run actions/checkout (with credentials, so the state branch can be pushed) before this.
+name: release executor setup
+description: Python, pinned infra-config, qqrelease and the release-state worktree
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      with:
+        python-version: "3.14"
+    - name: read the infra-config pin
+      id: pin
+      shell: bash
+      run: python -c "import tomllib; print('commit=' + tomllib.load(open('pins.toml', 'rb'))['infra-config']['commit'])" >> "$GITHUB_OUTPUT"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        repository: quirq-ai/infra-config
+        ref: ${{ steps.pin.outputs.commit }}
+        path: .qq/infra-config
+        persist-credentials: false
+    - shell: bash
+      run: python -m pip install --quiet .
+    - name: open the release-state branch
+      shell: bash
+      run: |
+        if git ls-remote --exit-code origin refs/heads/release-state > /dev/null; then
+          git fetch --depth 1 origin release-state
+          git worktree add -B release-state .qq/state FETCH_HEAD
+        else
+          git worktree add --orphan -b release-state .qq/state
+        fi

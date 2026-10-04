@@ -35,3 +35,5 @@ jobs:
       - run: python -m pytest -q -p no:cacheprovider
       - name: lkgr moves on its own and never names a red commit (V0-REL-01 done-when, offline half)
         run: python tools/lkgr_demo.py --config .qq/infra-config
+      - name: a rollback drill restores the previous canary in under 10 min (V0-REL-02 done-when)
+        run: python tools/rollback_drill.py --config .qq/infra-config --budget-seconds 600
