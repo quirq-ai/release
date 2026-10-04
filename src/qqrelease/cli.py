@@ -224,10 +224,17 @@ def cmd_canary_finish(args) -> int:
             f = Path(args.stages_dir) / sel.repo / "stages.json"
             try:        # written where product code runs: any shape at all is "no results" (S5 counts it)
                 stages = json.loads(f.read_text()) if f.is_file() else None
-            except (OSError, ValueError):
+            except Exception:           # OSError, ValueError, RecursionError (deep nesting)...
                 stages = None
             try:
-                run = canary.finish(cfg, store, mirror, sel, stages, date, run_url=args.run_url, at=args.now)
+                try:
+                    run = canary.finish(cfg, store, mirror, sel, stages, date, run_url=args.run_url, at=args.now)
+                except ReleaseError:
+                    raise
+                except Exception as e:  # a shape nothing foresaw: record it as no results, so it is counted
+                    print(f"::warning::{sel.repo}: stage results unusable ({type(e).__name__}); "
+                          "recorded as none", file=sys.stderr)
+                    run = canary.finish(cfg, store, mirror, sel, None, date, run_url=args.run_url, at=args.now)
             except Exception as e:      # one repo's failure never loses another repo's record or hold
                 rc = 2
                 print(f"::error::{sel.repo}: {type(e).__name__}: {e}", file=sys.stderr)

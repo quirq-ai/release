@@ -27,6 +27,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -448,7 +449,8 @@ def _stage_rows(stages: dict | None, sel: "Selection") -> list[dict]:
         if isinstance(r, dict) and r.get("name") in STAGES:
             try:
                 seconds = round(float(r.get("seconds", 0)), 1)
-            except (TypeError, ValueError):
+                seconds = seconds if math.isfinite(seconds) else 0.0
+            except Exception:       # TypeError, ValueError, OverflowError (a 400-digit int)...
                 seconds = 0.0
             out.append({"name": r["name"], "ok": r.get("ok") is True, "ran": r.get("ran") is not False,
                         "detail": str(r.get("detail", ""))[:20000], "seconds": seconds})

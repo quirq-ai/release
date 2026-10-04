@@ -441,6 +441,20 @@ def test_stage_results_of_any_shape_are_counted_never_a_crash(world, config_root
     assert json.loads(canary.held_path(store, repo, shas[0]).read_text())["stage"] == "pipeline"
 
 
+def test_huge_numbers_in_stage_results_are_counted(world):
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    huge = int("9" * 400)
+    for ok in (True, False):
+        doc = {"repo": repo, "commit": shas[1], "stages": [{"name": "build", "ok": ok, "seconds": huge}]}
+        rows = canary._stage_rows(doc, canary.select(cfg, store, repo))
+        assert rows[0]["seconds"] == 0.0
+    doc = {"repo": repo, "commit": shas[1], "stages": [{"name": "build", "ok": True, "seconds": huge}]}
+    for i in range(canary.ERROR_LIMIT):
+        run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), doc, "2026-10-05")
+    assert run.outcome == "held"
+
+
 def test_finish_survives_unreadable_stage_results_and_keeps_other_holds(world, config_root, tmp_path):
     from qqrelease import cli
     cfg, store, mirror, repo, shas = world
@@ -450,14 +464,19 @@ def test_finish_survives_unreadable_stage_results_and_keeps_other_holds(world, c
     plan.write_text(json.dumps([{"repo": repo, "action": "build", "commit": sel.commit,
                                  "previous": sel.previous, "reason": sel.reason}]))
     (tmp_path / "st" / repo).mkdir(parents=True)
-    (tmp_path / "st" / repo / "stages.json").write_text("not json")
+    stages_file = tmp_path / "st" / repo / "stages.json"
+    contents = ("not json", "[" * 200000, json.dumps({"repo": repo, "commit": shas[1],
+                "stages": [{"name": "build", "ok": False, "seconds": int("9" * 400)}]}))
     args = ["canary", "finish", "--config", str(config_root), "--state", str(store.root), "--backend", "local",
             "--target-root", str(tmp_path / "targets"), "--plan", str(plan), "--stages-dir", str(tmp_path / "st"),
             "--held-out", str(tmp_path / "held.json")]
     for i in range(canary.ERROR_LIMIT):
+        stages_file.write_text(contents[i])
         rc = cli.main(args + ["--date", f"2026-10-0{5 + i}"])
     held = json.loads((tmp_path / "held.json").read_text())
-    assert rc == 0 and held[0]["stage"] == "pipeline" and canary.is_held(store, repo, shas[1])
+    # The third run is a real failure (ok: false), so it is held at build like any failure.
+    assert rc == 0 and held[0]["stage"] == "build" and canary.is_held(store, repo, shas[1])
+    assert json.loads(canary.errors_path(store, repo, shas[1]).read_text())["count"] == 2
 
 
 def test_a_hold_record_from_before_releases_still_holds(world):
