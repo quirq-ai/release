@@ -6,9 +6,11 @@
 # `releases` (0 for a commit's first hold). A retried dispatch is a no-op; re-running a finished run
 # after the commit was held again is refused, so each hold needs its own release.
 # Close the hold's failure issue by hand with a note on what was wrong with the machine.
-# Concurrency: its own group, so a release never cancels a pending canary or rollback (GitHub keeps
-# one pending run per group). Its push to release-state rebases over theirs, and finish never writes
-# a hold record that still holds, so the two cannot both change one record.
+# Concurrency: a group per held commit, so a release never cancels a pending canary, rollback or
+# another commit's release. GitHub keeps one pending run per group, so a second dispatch for the
+# same commit while one runs and one waits cancels the waiting one: check that your run ran; a retry
+# is safe. Its push to release-state rebases over other writers', and finish never writes a hold
+# record that still holds, so the two cannot both change one record.
 name: canary-release-hold
 run-name: release the canary hold on ${{ inputs.repo }} ${{ inputs.commit }}
 on:
@@ -25,10 +27,10 @@ on:
       released_before:
         description: entries in the hold record's `releases` (0 for the commit's first hold)
         required: true
-        default: "0"
-        type: string
+        default: 0
+        type: number
       reason:
-        description: why the hold was the machine's fault (recorded in the operation; one line, under 500 characters)
+        description: why the hold was the machine's fault (recorded in the operation; one line, at most 500 characters)
         required: true
         type: string
 permissions:
@@ -37,7 +39,7 @@ defaults:
   run:
     shell: bash
 concurrency:
-  group: release-canary-holds
+  group: release-canary-hold-${{ inputs.repo }}-${{ inputs.commit }}
   cancel-in-progress: false
 jobs:
   release-hold:

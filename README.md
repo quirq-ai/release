@@ -152,7 +152,11 @@ judge 3 times in a row since its last release (`ERROR_LIMIT`; about a day of the
 watchdog) is held, tagged `possible runner fault`, with a failure record and a postmortem draft like
 any hold. Until then it is rerun; a flaky failure can still ship on a green rerun within those 3.
 The same cap ends the loop for a commit that breaks its own `infra/repo.toml` (qqrecipes stops
-before writing results) and for a lost worker.
+before writing results), for stage results of any malformed shape, and for a lost worker. So a
+runner outage of about a day (or three cancelled canary runs) holds every canary repo's current
+lkgr commit as a possible runner fault, each with its own failure issue: nothing ships, and each
+repo recovers when lkgr moves or its hold is released. A promote that fails after every stage
+passed is not counted: the commit is not in doubt, the executor is.
 
 A machine fault that looks like an ordinary failing action is held too. Once the machine is fixed,
 release the hold with the `canary-release-hold` workflow (repo, full held commit, `released_before`,
@@ -161,7 +165,8 @@ entries in the hold record's `releases` (0 for the commit's first hold). From ma
 a `release-hold` operation, keyed on the release before it, and marks the hold record released in one
 release-state commit, with the run and who dispatched it; the next canary builds the commit again.
 A retried dispatch is a no-op, and re-running a finished release after the commit was held again is
-refused, so each hold needs its own release. The reason is one line under 500 characters. Close the
+refused, so each hold needs its own release. (Releases recorded before this chaining, at
+`cd88d72`, are not chained and are refused as hand edits; release-state had no canary records then.) The reason is one line of at most 500 characters. Close the
 hold's failure issue by hand with what was wrong with the machine.
 
 GitHub may drop a scheduled run, so `canary-watchdog` checks twice a day that every canary repo has

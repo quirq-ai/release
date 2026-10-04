@@ -217,30 +217,35 @@ def cmd_canary_finish(args) -> int:
     date = _today(args)
     held, rc = [], 0
     lines = [f"# Canary {date}", "", "| Repo | Outcome | Commit | Digest | Why |", "|---|---|---|---|---|"]
-    for item in plan:
-        sel = canary.Selection(**{k: item[k] for k in ("repo", "action", "commit", "previous", "reason")})
-        stages = None
-        f = Path(args.stages_dir) / sel.repo / "stages.json"
-        if f.is_file():
-            stages = json.loads(f.read_text())
-        try:
-            run = canary.finish(cfg, store, mirror, sel, stages, date, run_url=args.run_url, at=args.now)
-        except ReleaseError as e:
-            rc = 2
-            print(f"::error::{sel.repo}: {e}", file=sys.stderr)
-            lines.append(f"| {sel.repo} | **error** | | | {' '.join(str(e).replace('|', '/').split())} |")
-            continue
-        if run.outcome == "error":
-            rc = 2                      # the job goes red; the watchdog runs the day again
-            print(f"::error::{sel.repo}: {run.reason}", file=sys.stderr)
-        if run.outcome == "held":
-            held.append({"repo": run.repo, "commit": run.commit, "previous": run.previous,
-                         "digest": run.digest, "stage": next((s["name"] for s in run.stages if s.get("ok") is False), "pipeline"),
-                         "summary": f"Canary held for {run.repo}: {run.reason}"[:200]})
-        why = " ".join(run.reason.replace("|", "/").split())
-        lines.append(f"| {run.repo} | **{run.outcome}** | {run.commit[:12]} | {run.digest[:19]} | {why} |")
-    if args.held_out:
-        Path(args.held_out).write_text(json.dumps(held, sort_keys=True) + "\n")
+    try:
+        for item in plan:
+            sel = canary.Selection(**{k: item[k] for k in ("repo", "action", "commit", "previous", "reason")})
+            stages = None
+            f = Path(args.stages_dir) / sel.repo / "stages.json"
+            try:        # written where product code runs: any shape at all is "no results" (S5 counts it)
+                stages = json.loads(f.read_text()) if f.is_file() else None
+            except (OSError, ValueError):
+                stages = None
+            try:
+                run = canary.finish(cfg, store, mirror, sel, stages, date, run_url=args.run_url, at=args.now)
+            except Exception as e:      # one repo's failure never loses another repo's record or hold
+                rc = 2
+                print(f"::error::{sel.repo}: {type(e).__name__}: {e}", file=sys.stderr)
+                lines.append(f"| {sel.repo} | **error** | | | {' '.join(str(e).replace('|', '/').split())} |")
+                continue
+            if run.outcome == "error":
+                rc = 2                      # the job goes red; the watchdog runs the day again
+                print(f"::error::{sel.repo}: {run.reason}", file=sys.stderr)
+            if run.outcome == "held":
+                held.append({"repo": run.repo, "commit": run.commit, "previous": run.previous,
+                             "digest": run.digest,
+                             "stage": next((s["name"] for s in run.stages if s.get("ok") is False), "pipeline"),
+                             "summary": f"Canary held for {run.repo}: {run.reason}"[:200]})
+            why = " ".join(run.reason.replace("|", "/").split())
+            lines.append(f"| {run.repo} | **{run.outcome}** | {run.commit[:12]} | {run.digest[:19]} | {why} |")
+    finally:
+        if args.held_out:
+            Path(args.held_out).write_text(json.dumps(held, sort_keys=True) + "\n")
     print("\n".join(lines))
     return rc
 

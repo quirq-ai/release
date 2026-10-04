@@ -418,6 +418,48 @@ def test_errors_that_never_judge_a_commit_end_in_a_hold(world, config_root):
     assert canary.postmortem_draft(config_root, run)
 
 
+def test_stage_results_of_any_shape_are_counted_never_a_crash(world, config_root, tmp_path):
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    shapes = ({"repo": repo, "commit": shas[1], "stages": [{"name": 5, "ok": True}]},
+              {"repo": repo, "commit": shas[1], "stages": 5}, [1, 2])
+    for doc in shapes:
+        run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), doc, "2026-10-05")
+    assert run.outcome == "held" and canary.RUNNER_FAULT in run.reason
+    # Untrusted rows reach the hold and the postmortem only as plain values.
+    lkgr_to(store, mirror, repo, shas[2])
+    bare = {"repo": repo, "commit": shas[2], "stages": [{"name": "build"}]}
+    for i in range(canary.ERROR_LIMIT):
+        run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), bare, "2026-10-06")
+    assert run.outcome == "held" and run.stages[0]["name"] == "build"
+    assert "| build | **fail** |" in canary.postmortem_draft(config_root, run)
+    # Another commit's results never name this commit's stage.
+    lkgr_to(store, mirror, repo, shas[0])
+    other = {**passed(repo, shas[1]), "stages": [{"name": "verify", "ok": False, "ran": False}]}
+    for i in range(canary.ERROR_LIMIT):
+        run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), other, "2026-10-07")
+    assert json.loads(canary.held_path(store, repo, shas[0]).read_text())["stage"] == "pipeline"
+
+
+def test_finish_survives_unreadable_stage_results_and_keeps_other_holds(world, config_root, tmp_path):
+    from qqrelease import cli
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    sel = canary.select(cfg, store, repo)
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps([{"repo": repo, "action": "build", "commit": sel.commit,
+                                 "previous": sel.previous, "reason": sel.reason}]))
+    (tmp_path / "st" / repo).mkdir(parents=True)
+    (tmp_path / "st" / repo / "stages.json").write_text("not json")
+    args = ["canary", "finish", "--config", str(config_root), "--state", str(store.root), "--backend", "local",
+            "--target-root", str(tmp_path / "targets"), "--plan", str(plan), "--stages-dir", str(tmp_path / "st"),
+            "--held-out", str(tmp_path / "held.json")]
+    for i in range(canary.ERROR_LIMIT):
+        rc = cli.main(args + ["--date", f"2026-10-0{5 + i}"])
+    held = json.loads((tmp_path / "held.json").read_text())
+    assert rc == 0 and held[0]["stage"] == "pipeline" and canary.is_held(store, repo, shas[1])
+
+
 def test_a_hold_record_from_before_releases_still_holds(world):
     cfg, store, mirror, repo, shas = world
     lkgr_to(store, mirror, repo, shas[1])

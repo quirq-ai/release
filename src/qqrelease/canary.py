@@ -171,7 +171,7 @@ def _one_line(text: str, what: str) -> str:
     if not text:
         raise ReleaseError(f"say {what}; it goes in the operation and the record")
     if len(text) > REASON_LIMIT:
-        raise ReleaseError(f"{what} is {len(text)} characters; keep it under {REASON_LIMIT} and link to detail")
+        raise ReleaseError(f"{what} is {len(text)} characters; keep it to {REASON_LIMIT} and link to detail")
     return text
 
 
@@ -437,10 +437,28 @@ STAGES = ("build", "verify", "fuzz-smoke", "deploy-probe")
 TERMINAL = ("shipped", "held")
 
 
+def _stage_rows(stages: dict | None, sel: "Selection") -> list[dict]:
+    """The worker's known stages for this commit, reduced to plain values: the worker runs product
+    code, so its document may have any shape and nothing downstream may trust it."""
+    if not isinstance(stages, dict) or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
+        return []
+    rows = stages.get("stages")
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if isinstance(r, dict) and r.get("name") in STAGES:
+            try:
+                seconds = round(float(r.get("seconds", 0)), 1)
+            except (TypeError, ValueError):
+                seconds = 0.0
+            out.append({"name": r["name"], "ok": r.get("ok") is True, "ran": r.get("ran") is not False,
+                        "detail": str(r.get("detail", ""))[:20000], "seconds": seconds})
+    return out
+
+
 def verdict(stages: dict | None, sel: Selection) -> tuple[str, str]:
     """What the worker's stage results say, recomputed here: the worker runs product code, so its own
     `ok` is never trusted. Returns ("pass" | "fail" | "skip" | "missing", detail)."""
-    if stages is None or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
+    if not isinstance(stages, dict) or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
         return "missing", "the worker left no stage results for this commit"
     if stages.get("skip"):
         return "skip", str(stages["skip"])
@@ -471,10 +489,13 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
                     reason=sel.reason, run_url=run_url, started_at=started_at or at, finished_at=at)
     files: dict[Path, str] = {}
     if sel.action == "build":
-        v, detail = verdict(stages, sel)
+        try:
+            v, detail = verdict(stages, sel)
+        except Exception as e:   # a document of the wrong shape: not judged, and counted below (S5)
+            v, detail = "missing", f"the stage results are malformed ({type(e).__name__})"
         if v != "missing":
             # Only what verdict() judged: the four known stages, and a digest only if well formed.
-            run.stages = [s for s in stages.get("stages", []) if isinstance(s, dict) and s.get("name") in STAGES]
+            run.stages = _stage_rows(stages, sel)
             digest = str(stages.get("digest", ""))
             run.digest = digest if channels.DIGEST.fullmatch(digest) else ""
         if v == "skip":
@@ -494,8 +515,7 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
                                     "count": count, "last": run.reason, "date": date},
                                    sort_keys=True, indent=2) + "\n"
             if count >= ERROR_LIMIT:
-                got = [s for s in ((stages or {}).get("stages") or [])
-                       if isinstance(s, dict) and s.get("name") in STAGES]
+                got = _stage_rows(stages, sel)          # only this commit's own results
                 stuck = next((s["name"] for s in got if s.get("ok") is False), "pipeline")
                 run.stages = got or [{"name": "pipeline", "ok": False, "seconds": 0, "detail": detail}]
                 run.outcome = "held"
@@ -527,6 +547,8 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
                 run.stages = run.stages + [{"name": "promote", "ok": True, "seconds": 0, "detail": detail}]
                 run.reason = f"shipped {sel.commit[:12]} {run.digest}"
             except ReleaseError as e:
+                # Not counted towards ERROR_LIMIT: every stage passed, so the commit is not in doubt;
+                # the executor or the state store is, and the job going red says so.
                 run.outcome = "error"
                 run.reason = f"passed every stage but the promote failed: {e}; the watchdog runs this day again"
     path = run_path(store, sel.repo, date)
@@ -596,9 +618,10 @@ def postmortem_draft(cfg_root: Path, run: CanaryRun, failure_issue: str = "") ->
 
 
 def _postmortem_body(run: CanaryRun, failure_issue: str) -> str:
-    failed = next((s for s in run.stages if not s.get("ok")), {"name": "pipeline", "detail": ""})
-    rows = "\n".join(f"| {s['name']} | {'pass' if s['ok'] else '**fail**'} | {s['seconds']} s |"
-                     for s in run.stages)
+    failed = next((s for s in run.stages if isinstance(s, dict) and not s.get("ok")),
+                  {"name": "pipeline", "detail": ""})
+    rows = "\n".join(f"| {s.get('name', '?')} | {'pass' if s.get('ok') else '**fail**'} | {s.get('seconds', 0)} s |"
+                     for s in run.stages if isinstance(s, dict))
     detail = str(failed.get("detail", "")).replace("```", "'''")
     fault = (f"\n\nThis hold is tagged **{RUNNER_FAULT}**: the canary could not judge the commit several "
              "times in a row. Check the runner before blaming the commit." if RUNNER_FAULT in run.reason else "")
