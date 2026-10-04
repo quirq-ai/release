@@ -52,6 +52,22 @@ class Stage:
     ok: bool
     detail: str = ""
     seconds: float = 0.0
+    ran: bool = True       # False: the stage could not run (tooling, timeout): a pipeline error, not a verdict
+
+
+class CouldNotRun(Exception):
+    """The adapter did not run to a verdict: a timeout, a crash, no results. Never a held canary."""
+
+
+def _failed(r: dict) -> bool:
+    """A record of something that ran and failed (a nonzero action, a deployment or bench that failed)."""
+    if r.get("exit_code") not in (None, 0):
+        return True
+    d = r.get("deployment")
+    if d and (not d.get("ready") or any(not p.get("ok") for p in d.get("probes", []))):
+        return True
+    b = r.get("bench_result")
+    return bool(b) and not b.get("ok")
 
 
 @dataclass
@@ -145,16 +161,19 @@ def _recipes(goal: str, src: Path, out: Path, toolchains: list[str], env: dict |
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                            env={**os.environ, **(env or {})})
     except subprocess.TimeoutExpired:
-        return 124, [], f"timed out after {timeout} s"
-    records = []
-    results = out / "results.json"
-    if results.is_file():
-        try:
-            records = json.loads(results.read_text())
-        except ValueError:
-            records = []
+        raise CouldNotRun(f"qqrecipes {goal} timed out after {timeout} s") from None
     tail = "\n".join((p.stdout + p.stderr).strip().splitlines()[-15:])
-    return p.returncode, records, tail
+    try:
+        records = json.loads((out / "results.json").read_text())
+        if not isinstance(records, list):
+            raise ValueError("not a list")
+    except (OSError, ValueError) as e:
+        raise CouldNotRun(f"qqrecipes {goal} left no results ({type(e).__name__}, exit {p.returncode}):\n{tail}") from None
+    # Exit codes decide, never output text: 0 passed; 1 with a failing record ran and failed. Anything
+    # else (a crash, an adapter or manifest that could not load, 1 with nothing failing) did not run.
+    if p.returncode == 0 or (p.returncode == 1 and any(_failed(r) for r in records if isinstance(r, dict))):
+        return p.returncode, records, tail
+    raise CouldNotRun(f"qqrecipes {goal} exited {p.returncode} without a failing action:\n{tail}")
 
 
 def artifact_digest(records: list[dict]) -> str:
@@ -206,11 +225,14 @@ def run_stages(cfg: dict, repo: str, commit: str, src: Path, out: Path, toolchai
 
     def stage(name: str, fn) -> bool:
         t = time.monotonic()
+        ran = True
         try:
             ok, detail = fn()
-        except Exception as e:  # a crashed stage is a failed stage, never a pass
-            ok, detail = False, f"{type(e).__name__}: {e}"
-        stages.append(Stage(name, ok, detail, round(time.monotonic() - t, 1)))
+        except CouldNotRun as e:
+            ok, detail, ran = False, f"could not run: {e}", False
+        except Exception as e:  # a crash in the stage itself: never a pass, and not the commit's fault
+            ok, detail, ran = False, f"could not run: {type(e).__name__}: {e}", False
+        stages.append(Stage(name, ok, detail, round(time.monotonic() - t, 1), ran))
         return ok
 
     def build():
@@ -268,13 +290,15 @@ def verdict(stages: dict | None, sel: Selection) -> tuple[str, str]:
         return "missing", "the worker left no stage results for this commit"
     if stages.get("skip"):
         return "skip", str(stages["skip"])
-    got = stages.get("stages") or []
+    got = [s for s in (stages.get("stages") or []) if isinstance(s, dict)]
     for s in got:
         if s.get("name") in STAGES and s.get("ok") is False:
+            if s.get("ran") is False:   # tooling, not the commit: a pipeline error, never a hold
+                return "missing", f"the {s['name']} stage could not run"
             return "fail", s["name"]
     if [s.get("name") for s in got] != list(STAGES) or not all(s.get("ok") is True for s in got):
         return "missing", "the stage results are incomplete: " + ", ".join(s.get("name", "?") for s in got)
-    if not str(stages.get("digest", "")).startswith("sha256:"):
+    if not channels.DIGEST.fullmatch(str(stages.get("digest", ""))):
         return "missing", "the stage results name no sha256 artifact digest"
     return "pass", ""
 
@@ -295,7 +319,10 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
     if sel.action == "build":
         v, detail = verdict(stages, sel)
         if v != "missing":
-            run.stages, run.digest = stages.get("stages", []), stages.get("digest", "")
+            # Only what verdict() judged: the four known stages, and a digest only if well formed.
+            run.stages = [s for s in stages.get("stages", []) if isinstance(s, dict) and s.get("name") in STAGES]
+            digest = str(stages.get("digest", ""))
+            run.digest = digest if channels.DIGEST.fullmatch(digest) else ""
         if v == "skip":
             run.reason = detail
         elif v == "missing":

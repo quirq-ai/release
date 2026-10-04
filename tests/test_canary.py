@@ -294,3 +294,57 @@ def test_the_report_shows_errors_and_unreadable_records_and_keeps_text_inert(wor
     assert f"| {repo} | **error** |" in text and "1 pipeline error" in text
     many = [{"number": i, "title": "t", "url": "u"} for i in range(report.OPEN_LIMIT)]
     assert "possibly more" in report.build(cfg, store, "2026-10-06", many)
+
+
+def test_a_stage_that_could_not_run_is_an_error_not_a_hold(world, tmp_path, monkeypatch):
+    cfg, store, mirror, repo, shas = world
+    src = tmp_path / "src"
+    (src / "infra").mkdir(parents=True)
+    (src / "infra" / "repo.toml").write_text("")
+    calls, real = [], subprocess.run
+
+    def fake_run(cmd, **kw):
+        if "qqrecipes.cli" not in cmd:
+            return real(cmd, **kw)                                  # git, for the state store
+        calls.append(cmd)
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(cmd, 1)          # a lost or stuck worker
+        return subprocess.CompletedProcess(cmd, 3, "", "Traceback: ModuleNotFoundError")
+
+    monkeypatch.setattr(canary.subprocess, "run", fake_run)
+    doc = canary.run_stages(cfg, repo, shas[1], src, tmp_path / "out", [], "2026-10-05")
+    assert doc["stages"][0]["ran"] is False and "timed out" in doc["stages"][0]["detail"]
+    lkgr_to(store, mirror, repo, shas[1])
+    run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), doc, "2026-10-05")
+    assert run.outcome == "error" and not canary.held_path(store, repo, shas[1]).is_file()
+    doc = canary.run_stages(cfg, repo, shas[1], src, tmp_path / "out2", [], "2026-10-05")
+    assert doc["stages"][0]["ran"] is False and "left no results" in doc["stages"][0]["detail"]
+
+
+def test_exit_codes_decide_whether_a_stage_ran(tmp_path, monkeypatch):
+    out = tmp_path / "o"
+    out.mkdir()
+
+    def runs(rc, records):
+        (out / "results.json").write_text(json.dumps(records))
+        monkeypatch.setattr(canary.subprocess, "run",
+                            lambda cmd, **kw: subprocess.CompletedProcess(cmd, rc, "", ""))
+        return canary._recipes("test", tmp_path, out, [])
+
+    assert runs(0, [])[0] == 0
+    assert runs(1, [{"exit_code": 1}])[0] == 1                         # ran and failed: a verdict
+    assert runs(1, [{"deployment": {"ready": True, "probes": [{"ok": False}]}}])[0] == 1
+    for rc, recs in ((1, [{"exit_code": 0}]), (2, [{"exit_code": 1}]), (1, {"x": 1})):
+        with pytest.raises(canary.CouldNotRun):
+            runs(rc, recs)
+
+
+def test_the_held_stage_and_digest_come_from_the_verdict(world):
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    bad = passed(repo, shas[1], digest="sha256:" + "a" * 64 + "\n")
+    bad["stages"] = [{"name": "junk", "ok": False, "detail": "x", "seconds": 0}] + bad["stages"]
+    bad["stages"][1]["ok"] = False                                      # build failed
+    run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), bad, "2026-10-05")
+    assert run.outcome == "held" and run.reason.startswith("held at build")
+    assert [s["name"] for s in run.stages][0] == "build" and run.digest == ""

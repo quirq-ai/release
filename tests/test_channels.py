@@ -120,8 +120,14 @@ def test_cli_rollback_round_trip(world, config_root, tmp_path):
         channels.apply(store, mirror, channels.plan_promote(cfg, store, repo, "canary", sha, dig))
     rc = cli.main(["channel", "rollback", "--config", str(config_root), "--state", str(store.root),
                    "--backend", "local", "--target-root", str(tmp_path / "targets"), "--repo", repo,
-                   "--channel", "canary"])
+                   "--channel", "canary", "--from", shas[2]])
     assert rc == 0 and git("rev-parse", "refs/heads/channels/canary", cwd=d) == shas[1]
+    again = cli.main(["channel", "rollback", "--config", str(config_root), "--state", str(store.root),
+                      "--backend", "local", "--target-root", str(tmp_path / "targets"), "--repo", repo,
+                      "--channel", "canary", "--from", shas[2]])                 # the second dispatch
+    assert again == 2 and git("rev-parse", "refs/heads/channels/canary", cwd=d) == shas[1]
+    with pytest.raises(ReleaseError, match="has moved"):                            # no prefix match
+        channels.plan_rollback(cfg, store, repo, "canary", from_commit=shas[1][:7])
 
 
 
@@ -173,7 +179,7 @@ def test_retrying_a_rollback_whose_write_landed_does_not_roll_back_again(world, 
         channels.apply(store, Timeout(), op)
     rc = cli.main(["channel", "rollback", "--config", str(config_root), "--state", str(store.root),
                    "--backend", "local", "--target-root", str(tmp_path / "targets"), "--repo", repo,
-                   "--channel", "canary"])
+                   "--channel", "canary", "--from", shas[1]])
     ptr = store.pointer(repo, "channels/canary")
     assert rc == 0 and (ptr.commit, ptr.digest) == (shas[0], D1)
     assert git("rev-parse", "refs/heads/channels/canary", cwd=d) == shas[0]

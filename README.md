@@ -94,9 +94,9 @@ qq channel rollback ...    # the same command in depot's qq (entry point qq.comm
 - `rollback` points the channel at the newest earlier commit and digest from the pointer's history
   that it was never rolled back from. Nothing is rebuilt. The value it moves away from is recorded
   as rolled back: a second rollback goes further back, never forward, and a promotion never ships it
-  again. Retrying a rollback whose write already landed does nothing more, and with `--from` (the commit the channel names now) a re-run or double
-  dispatch is refused instead of rolling back twice. The `channel-rollback`
-  workflow runs it on demand.
+  again. Retrying a rollback whose write already landed does nothing more. `--from` is required: the
+  full commit the channel names now, so a re-run or a second dispatch is refused instead of rolling
+  back twice. The `channel-rollback` workflow runs it on demand.
 - A promotion that changes nothing is refused. When a channel takes its build from another channel
   (dev from canary), it takes that channel's digest too, so only a vetted artifact moves on.
 - v0 promotes only channels whose `channels.toml` rules need no person and no signal it cannot read
@@ -138,7 +138,8 @@ and an agent completes it in v1. Stage results go to the results store through t
 
 Only a stage's verdict holds a commit. `finish` recomputes it from the stage results itself (all four
 stages, in order, passing, with a `sha256:` digest), since the worker runs product code. When the
-pipeline itself fails (a lost worker, missing or incomplete results, a promote that could not be
+pipeline itself fails (a lost worker, missing or incomplete results, a stage whose adapter could not
+run: a timeout, a crash, no results, judged by exit codes alone; a promote that could not be
 written), the outcome is `error`: nothing is held, the job goes red, and the day counts as not yet
 run. The day's verdict stays on top of its record (a hold always does) and later runs are kept under `later`;
 rerunning `finish` after a ship records the ship again, never a hold.
