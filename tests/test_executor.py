@@ -75,7 +75,7 @@ def test_a_retry_of_the_same_intent_does_nothing_twice(target, store):
     assert done.state == "applied" and ptr.generation == 1 and len(mirror.seen) == 1
 
 
-def test_a_recorded_operation_is_finished_after_a_crash(target, store):
+def test_a_run_that_died_before_the_write_is_abandoned_then_planned_again(target, store):
     root, shas = target
     op = executor.plan(store, "advance", "demo", "lkgr", shas[2])
 
@@ -85,10 +85,15 @@ def test_a_recorded_operation_is_finished_after_a_crash(target, store):
 
     with pytest.raises(KeyboardInterrupt):
         executor.move(store, Crash(), op)
-    assert store.op(op.key).state == "recorded"
+    assert store.op(op.key).state == "recorded" and store.pointer("demo", "lkgr").pending == op.key
+    mirror = load("local", target_root=root)
+    with pytest.raises(ReleaseError, match="settle it first"):
+        executor.move(store, mirror, executor.plan(store, "advance", "demo", "lkgr", shas[2]))
+    settled = executor.finish_pending(store, mirror, "demo", "lkgr")
+    assert settled.state == "abandoned" and not store.pointer("demo", "lkgr").pending
     again = executor.plan(store, "advance", "demo", "lkgr", shas[2])
-    assert again.key == op.key
-    done, ptr = executor.move(store, load("local", target_root=root), again)
+    assert again.key == op.key           # the same intent, recorded afresh
+    done, ptr = executor.move(store, mirror, again)
     assert done.state == "applied" and ptr.commit == shas[2]
 
 
@@ -187,7 +192,7 @@ def test_a_crash_after_the_ref_moved_is_finished_before_moving_on(target, store)
     with pytest.raises(KeyboardInterrupt):
         executor.move(store, LandsThenDies(), op)
     assert store.pointer("demo", "lkgr").commit == shas[0]       # the store does not know yet
-    with pytest.raises(ReleaseError, match="finish it first"):
+    with pytest.raises(ReleaseError, match="settle it first"):
         executor.move(store, mirror, executor.plan(store, "advance", "demo", "lkgr", shas[2]))
     finished = executor.finish_pending(store, mirror, "demo", "lkgr")
     assert finished.key == op.key and finished.state == "applied" and finished.mirror == "already there"
@@ -212,3 +217,57 @@ def test_a_write_that_landed_but_reported_failure_is_finished(target, store):
     assert store.op(op.key).state == "failed"
     done = executor.finish_pending(store, mirror, "demo", "lkgr")
     assert done.state == "applied" and store.pointer("demo", "lkgr").commit == shas[1]
+
+
+def test_settling_never_writes_a_stale_target(target, store):
+    """A pending move to c2 that never landed, and c2 has turned red since: settling must not write
+    c2 (the verdicts it was planned on are stale); it abandons the op and lkgr is planned again."""
+    root, shas = target
+    mirror = load("local", target_root=root)
+    executor.move(store, mirror, executor.plan(store, "advance", "demo", "lkgr", shas[0]))
+    op = executor.plan(store, "advance", "demo", "lkgr", shas[1])
+
+    class BadGateway:
+        def write_ref(self, *a):
+            raise ReleaseError("HTTP 502")
+
+    with pytest.raises(ReleaseError):
+        executor.move(store, BadGateway(), op)
+    spy = Spy(mirror, store)
+    spy.can_write = mirror.can_write
+    spy.read_ref = mirror.read_ref
+    settled = executor.finish_pending(store, spy, "demo", "lkgr")
+    assert settled.state == "abandoned" and spy.seen == []
+    assert git("rev-parse", "refs/heads/lkgr", cwd=root / "demo") == shas[0]
+    assert store.pointer("demo", "lkgr").commit == shas[0]
+
+
+def test_settling_without_an_identity_abandons(store):
+    mirror = load("github", repos={"demo": "quirq-ai/demo"}, token="")
+    op = executor.plan(store, "advance", "demo", "lkgr", "a" * 40)
+
+    class Crash:
+        def write_ref(self, *a):
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        executor.move(store, Crash(), op)
+    assert executor.finish_pending(store, mirror, "demo", "lkgr").state == "abandoned"
+
+
+def test_a_ref_moved_by_someone_else_keeps_the_operation_pending(target, store):
+    root, shas = target
+    mirror = load("local", target_root=root)
+    executor.move(store, mirror, executor.plan(store, "advance", "demo", "lkgr", shas[0]))
+    op = executor.plan(store, "advance", "demo", "lkgr", shas[1])
+
+    class Dies:
+        def write_ref(self, *a):
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        executor.move(store, Dies(), op)
+    git("update-ref", "refs/heads/lkgr", shas[2], cwd=root / "demo")     # not the executor
+    with pytest.raises(ReleaseError, match="something else moved it"):
+        executor.finish_pending(store, mirror, "demo", "lkgr")
+    assert store.pointer("demo", "lkgr").pending == op.key

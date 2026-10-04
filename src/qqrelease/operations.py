@@ -31,7 +31,7 @@ class Operation:
     digest: str = ""         # artifact digest the pointer names; "" for lkgr
     reason: str = ""
     actor: str = ""          # who ran the executor: a workflow run URL, or "local"
-    state: str = "recorded"  # recorded, applied, failed
+    state: str = "recorded"  # recorded, applied, failed, abandoned (it never landed)
     recorded_at: str = ""
     applied_at: str = ""
     mirror: str = ""         # what happened to the target repo's git ref: "pushed", "already there",

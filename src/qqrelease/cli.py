@@ -75,7 +75,8 @@ def cmd_lkgr(args) -> int:
             # One repo's trouble must not stop lkgr for the others.
             rc = 2
             print(f"::error::{repo.name}: {e}", file=sys.stderr)
-            row = f"| {repo.name} | **error** | | {e} | |"
+            why = " ".join(str(e).replace("|", "/").split())
+            row = f"| {repo.name} | **error** | | {why} | |"
         if "**stuck**" in row:
             rc = max(rc, 1)
         lines.append(row)

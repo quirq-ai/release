@@ -27,6 +27,9 @@ class Mirror:
                            cwd=self._repo(repo), capture_output=True, text=True)
         return p.stdout.strip() if p.returncode == 0 else ""
 
+    def can_write(self) -> bool:
+        return True
+
     def actor(self) -> str:
         return "local"
 

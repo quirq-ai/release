@@ -48,9 +48,11 @@ intent (repo, ref, from, to, digest) and the pointer's generation, and is commit
 this repo's `release-state` branch **before** anything else changes. Then the target repo's git ref
 moves (compare-and-swap: it refuses if something else moved it), then the new pointer and the
 applied operation are recorded together. A retry with the same intent is a no-op. Until its
-result is recorded the pointer names the operation as `pending`, and every run finishes a pending
-operation before planning a new one, so a run that died after moving the ref (or timed out on a
-write that landed) never wedges the pointer. The one case lkgr cannot fix alone is `stuck`: its
+result is recorded the pointer names the operation as `pending`, and every run settles a pending
+operation before planning a new one. Settling reads the target ref and never writes it: if the
+write landed (a run died after it, or timed out on it) the operation is applied; if it did not, the
+operation is abandoned and the move is planned again from fresh verdicts, so a stale move to a
+commit that has since turned red is never made. The one case lkgr cannot fix alone is `stuck`: its
 commit turned red and no listed commit is green; it stays put and the workflow fails loudly.
 
     release-state branch

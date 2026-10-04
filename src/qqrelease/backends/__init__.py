@@ -8,6 +8,7 @@ A backend module defines `Mirror` with:
     write_ref(repo, ref, expected, new) -> str    # moves it to `new` only from a value in `expected`
                                                   # ("" = absent); "pushed", "already there" or
                                                   # "skipped: <why>"
+    can_write() -> bool                           # False when writes are skipped (no identity)
     actor() -> str                                # who is acting: a run URL, or "local"
 """
 from __future__ import annotations

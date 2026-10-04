@@ -52,7 +52,10 @@ jobs:
           fi
       - name: list the onboarded repos for the executor token
         id: repos
-        run: echo "names=$(qqrelease repos --config .qq/infra-config)" >> "$GITHUB_OUTPUT"
+        run: |
+          names=$(qqrelease repos --config .qq/infra-config)
+          [ -n "$names" ] || { echo "::error::no onboarded repos: refusing an unscoped executor token"; exit 1; }
+          echo "names=$names" >> "$GITHUB_OUTPUT"
       # The release executor identity. Absent until suraj creates it (see the header).
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
         id: executor

@@ -40,6 +40,9 @@ class Mirror:
         doc = self._request("GET", f"/repos/{self._slug(repo)}/git/ref/heads/{_quote(ref)}")
         return (doc or {}).get("object", {}).get("sha", "")
 
+    def can_write(self) -> bool:
+        return bool(self.token)
+
     def actor(self) -> str:
         run = os.environ.get("GITHUB_RUN_ID", "")
         if not run:
