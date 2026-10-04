@@ -143,6 +143,23 @@ def test_a_second_run_on_a_day_keeps_the_first(world):
     assert rec["outcome"] == "shipped" and rec["later"][0]["outcome"] == "noop"
 
 
+def test_a_hold_after_a_ship_on_the_same_day_is_on_top(world, config_root, capsys):
+    from qqrelease import cli
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), passed(repo, shas[1]), "2026-10-05")
+    lkgr_to(store, mirror, repo, shas[2])
+    bad = passed(repo, shas[2])
+    bad["stages"][1]["ok"] = False
+    canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), bad, "2026-10-05")   # a manual dispatch
+    rec = json.loads(canary.run_path(store, repo, "2026-10-05").read_text())
+    assert rec["outcome"] == "held" and rec["earlier"][0]["outcome"] == "shipped"
+    rc = cli.main(["canary", "postmortem", "--config", str(config_root), "--state", str(store.root),
+                   "--repo", repo, "--date", "2026-10-05", "--commit", shas[2]])
+    out = capsys.readouterr().out
+    assert rc == 0 and "at verify" in out and shas[2][:12] in out
+
+
 def test_rerunning_finish_after_a_ship_stays_shipped(world):
     cfg, store, mirror, repo, shas = world
     lkgr_to(store, mirror, repo, shas[1])

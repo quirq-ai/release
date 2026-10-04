@@ -331,10 +331,11 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
     path = run_path(store, sel.repo, date)
     doc = dataclasses.asdict(run)
     if path.is_file():
-        # Another run on the same day (the watchdog, a retry). The first verdict stays on top, and
-        # what came after is kept under `later`; a verdict replaces an earlier no-op or error.
+        # Another run on the same day (the watchdog, a retry, a manual dispatch). The day's verdict
+        # stays on top and what came after is kept under `later`; a verdict replaces an earlier no-op
+        # or error, and a hold always goes on top, so the report never hides it.
         prior = json.loads(path.read_text())
-        if prior.get("outcome") in TERMINAL:
+        if prior.get("outcome") in TERMINAL and run.outcome != "held":
             doc = {**prior, "later": prior.get("later", []) + [doc]}
         else:
             earlier = prior.pop("earlier", []) + [{k: v for k, v in prior.items() if k != "later"}]
@@ -344,8 +345,20 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
     return run
 
 
+def runs_on(store: Store, repo: str, date: str) -> list[dict]:
+    """Every run recorded for `repo` on `date`: the top-level one, then `earlier`, then `later`."""
+    path = run_path(store, repo, date)
+    if not path.is_file():
+        return []
+    top = json.loads(path.read_text())
+    flat = {k: v for k, v in top.items() if k not in ("earlier", "later")}
+    return [flat] + top.get("earlier", []) + top.get("later", [])
+
+
 def missing_runs(cfg: dict, store: Store, date: str) -> list[str]:
     """Canary repos with no run record for `date`: what the watchdog starts."""
+    # TODO(expert): a day that keeps ending in error (say a worker that always reports the wrong
+    # commit) is rerun twice a day without escalating; v1 should file a failure record after N.
     def judged(r: str) -> bool:
         p = run_path(store, r, date)
         return p.is_file() and json.loads(p.read_text()).get("outcome") != "error"

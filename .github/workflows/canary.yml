@@ -199,6 +199,7 @@ jobs:
           REPO: ${{ matrix.repo }}
           DATE: ${{ needs.plan.outputs.date }}
           FAILURE_ISSUE: ${{ steps.failure.outputs.issue }}
+          COMMIT: ${{ matrix.commit }}
         run: |
           title="Postmortem draft: canary held for $REPO on $DATE"
           if [ -n "$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --label postmortem \
@@ -206,7 +207,7 @@ jobs:
             echo "already drafted"; exit 0
           fi
           qqrelease canary postmortem --config .qq/infra-config --state .qq/state --repo "$REPO" \
-            --date "$DATE" --failure-issue "$FAILURE_ISSUE" > postmortem.md
+            --date "$DATE" --commit "$COMMIT" --failure-issue "$FAILURE_ISSUE" > postmortem.md
           gh label create postmortem --repo "$GITHUB_REPOSITORY" --color B60205 \
             --description "postmortem draft (infra-config postmortem.toml)" 2>/dev/null || true
           gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label postmortem --body-file postmortem.md

@@ -128,7 +128,7 @@ Only a stage's verdict holds a commit. `finish` recomputes it from the stage res
 stages, in order, passing, with a `sha256:` digest), since the worker runs product code. When the
 pipeline itself fails (a lost worker, missing or incomplete results, a promote that could not be
 written), the outcome is `error`: nothing is held, the job goes red, and the day counts as not yet
-run. The first verdict of a day stays on top of its record and later runs are kept under `later`;
+run. The day's verdict stays on top of its record (a hold always does) and later runs are kept under `later`;
 rerunning `finish` after a ship records the ship again, never a hold.
 
 GitHub may drop a scheduled run, so `canary-watchdog` checks twice a day that every canary repo has

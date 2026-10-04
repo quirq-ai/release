@@ -234,7 +234,7 @@ def cmd_canary_finish(args) -> int:
             print(f"::error::{sel.repo}: {run.reason}", file=sys.stderr)
         if run.outcome == "held":
             held.append({"repo": run.repo, "commit": run.commit, "previous": run.previous,
-                         "digest": run.digest, "stage": next(s["name"] for s in run.stages if not s["ok"]),
+                         "digest": run.digest, "stage": next(s["name"] for s in run.stages if s.get("ok") is False),
                          "summary": f"Canary held for {run.repo}: {run.reason}"[:200]})
         why = " ".join(run.reason.replace("|", "/").split())
         lines.append(f"| {run.repo} | **{run.outcome}** | {run.commit[:12]} | {run.digest[:19]} | {why} |")
@@ -252,10 +252,11 @@ def cmd_canary_missing(args) -> int:
 
 def cmd_canary_postmortem(args) -> int:
     store = Store(args.state)
-    path = canary.run_path(store, args.repo, _today(args))
-    if not path.is_file():
-        raise ReleaseError(f"no canary run for {args.repo} on {_today(args)}")
-    run = canary.CanaryRun.from_dict(json.loads(path.read_text()))
+    found = [r for r in canary.runs_on(store, args.repo, _today(args))
+             if r.get("outcome") == "held" and (not args.commit or r.get("commit") == args.commit)]
+    if not found:
+        raise ReleaseError(f"no held canary run for {args.repo} {args.commit[:12]} on {_today(args)}")
+    run = canary.CanaryRun.from_dict(found[0])
     print(canary.postmortem_draft(Path(args.config), run, args.failure_issue), end="")
     return 0
 
@@ -309,6 +310,7 @@ def add_canary(sub) -> None:
     s.add_argument("--state", required=True)
     s.add_argument("--repo", required=True)
     s.add_argument("--date")
+    s.add_argument("--commit", default="", help="the held commit (the day may hold one and ship another)")
     s.add_argument("--failure-issue", default="")
     s.set_defaults(func=cmd_canary_postmortem)
 
