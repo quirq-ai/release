@@ -294,3 +294,20 @@ def test_a_landed_write_is_found_by_a_run_without_an_identity(target, store):
 
     assert executor.finish_pending(store, ReadOnly(), "demo", "lkgr").state == "applied"
     assert store.pointer("demo", "lkgr").commit == shas[1]
+
+
+def test_a_push_race_with_the_other_writer_is_rebased(tmp_path):
+    remote = tmp_path / "remote.git"
+    git("init", "-q", "--bare", "-b", "release-state", str(remote), cwd=tmp_path)
+    a, b = tmp_path / "a", tmp_path / "b"
+    for d in (a, b):
+        git("clone", "-q", str(remote), str(d), cwd=tmp_path)
+        git("checkout", "-q", "-b", "release-state", cwd=d)
+    sa, sb = Store(a, push=True), Store(b, push=True)
+    sa.save({a / "pointers" / "x" / "lkgr.json": "{}\n"}, "lkgr")
+    sb.save({b / "pointers" / "x" / "channels" / "canary.json": "{}\n"}, "canary")   # behind: rebases
+    log = git("--git-dir", str(remote), "log", "--format=%s", "release-state", cwd=tmp_path)
+    assert log.splitlines() == ["canary", "lkgr"]
+    sb.save({b / "pointers" / "x" / "lkgr.json": "{\"other\": 1}\n"}, "conflict")
+    with pytest.raises(ReleaseError, match="conflicted"):
+        sa.save({a / "pointers" / "x" / "lkgr.json": "{\"mine\": 1}\n"}, "mine")

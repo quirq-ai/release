@@ -67,12 +67,46 @@ still moves in `release-state`, which is the record readers use. The pointer rem
 ref was not written (`mirrored: false`), so the first write after the identity exists creates the
 ref instead of refusing it as moved by someone else.
 
+## Channels and rollback (V0-REL-02)
+
+Channels and their order come from infra-config `channels.toml`; which channels a repo ships on,
+from `repos.toml`. A channel's pointer `channels/<name>` names a commit **and** the digest
+(`sha256:...`) of the artifact built from it.
+
+```sh
+qqrelease channel promote  --config ... --state ... --repo NAME --channel canary --commit SHA --digest sha256:...
+qqrelease channel rollback --config ... --state ... --repo NAME --channel canary --reason "..." --from COMMIT
+qqrelease channel show     --state ...
+qq channel rollback ...    # the same command in depot's qq (entry point qq.commands)
+```
+
+- `promote` only accepts the commit the channel's source names now: canary takes `lkgr`'s, dev
+  takes canary's. The daily canary pipeline (V0-REL-03) is what calls it.
+- `rollback` points the channel at the newest earlier commit and digest from the pointer's history
+  that it was never rolled back from. Nothing is rebuilt. The value it moves away from is recorded
+  as rolled back: a second rollback goes further back, never forward, and a promotion never ships it
+  again. Retrying a rollback whose write already landed does nothing more, and with `--from` (the commit the channel names now) a re-run or double
+  dispatch is refused instead of rolling back twice. The `channel-rollback`
+  workflow runs it on demand.
+- A promotion that changes nothing is refused. When a channel takes its build from another channel
+  (dev from canary), it takes that channel's digest too, so only a vetted artifact moves on.
+- v0 promotes only channels whose `channels.toml` rules need no person and no signal it cannot read
+  yet (canary). A channel that needs an approval, a soak or health signals (dev, stable) is refused,
+  and so is a rollback whose `[channel.rollback]` needs an approval: held, never done unchecked.
+- After every move, `channels.json` on `release-state` (schema `qq-channels/1`) says what each
+  repo's channels name: commit, digest, generation, operation and time. The installer reads it
+  (V0-INS-01): `https://raw.githubusercontent.com/quirq-ai/release/release-state/channels.json`.
+
+`tools/rollback_drill.py` ships two canaries per repo through the executor, rolls back, and checks
+that the ref, the pointer and `channels.json` all name the previous canary again, within 10
+minutes. Presubmit runs it on every change.
+
 ## v0 status
 
 | Item | What | PR | State |
 |---|---|---|---|
 | V0-REL-01 | `lkgr` ref | #2 | in review |
-| V0-REL-02 | Channel pointers and rollback | | not started |
+| V0-REL-02 | Channel pointers and rollback | #3 | in review |
 | V0-REL-03 | Daily canary pipeline v0 | | waits on V0-TST-04 |
 | V0-REL-04 | Daily canary report | | waits on V0-REL-03 |
 

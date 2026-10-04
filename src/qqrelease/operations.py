@@ -76,6 +76,9 @@ class Pointer:
     updated_at: str = ""
     pending: str = ""         # key of an operation recorded but not yet applied
     mirrored: bool = False    # whether the target repo's git ref is known to name `commit`
+    # Values a rollback moved away from, newest first ({commit, digest}). They are bad: a later
+    # rollback never returns to one, and a promotion never ships one again.
+    rolled_back: list[dict[str, Any]] = field(default_factory=list)
     history: list[dict[str, Any]] = field(default_factory=list)
     schema: str = "qq-pointer/1"
 
@@ -95,6 +98,9 @@ class Pointer:
     def moved(self, op: Operation, at: str, mirrored: bool) -> "Pointer":
         prev = ([{"commit": self.commit, "digest": self.digest, "generation": self.generation,
                   "op": self.op, "updated_at": self.updated_at}] if self.commit else [])
+        bad = self.rolled_back
+        if op.kind == "rollback" and self.commit:
+            bad = [{"commit": self.commit, "digest": self.digest}] + bad
         return Pointer(repo=self.repo, ref=self.ref, commit=op.to_commit, digest=op.digest,
                        generation=self.generation + 1, op=op.key, updated_at=at, mirrored=mirrored,
-                       history=(prev + self.history)[:self.HISTORY])
+                       history=(prev + self.history)[:self.HISTORY], rolled_back=bad[:self.HISTORY])

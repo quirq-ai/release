@@ -19,6 +19,10 @@ test = ["pytest==9.1.1"]
 [project.scripts]
 qqrelease = "qqrelease.cli:main"
 
+# `qq channel ...` in depot's qq.
+[project.entry-points."qq.commands"]
+channel = "qqrelease.cli:register"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
