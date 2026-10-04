@@ -250,3 +250,20 @@ def test_canary_may_not_ship_a_commit_lkgr_retreated_from(world):
     lkgr_to(store, mirror, repo, shas[2])          # forward again: shas[1] is behind a retreat
     with pytest.raises(ReleaseError, match="not it"):
         channels.plan_promote(cfg, store, repo, "canary", shas[0], D1)
+
+
+def test_nothing_the_installer_would_refuse_is_published(world):
+    cfg, store, mirror, repo, shas, _ = world
+    lkgr_to(store, mirror, repo, shas[0])
+    with pytest.raises(ReleaseError, match="not sha256"):
+        channels.plan_promote(cfg, store, repo, "canary", shas[0], D1 + "\n")     # re.match took this
+    with pytest.raises(ReleaseError, match="40-character"):
+        channels.plan_promote(cfg, store, repo, "canary", shas[0].upper(), D1)
+    for bad in (".github", "x" * 101, "café"):
+        with pytest.raises(ReleaseError, match="installer accepts"):
+            channels.check_repo(cfg, bad, "canary")
+    ship(cfg, store, mirror, repo, shas[0], D1)
+    good = store.pointer(repo, "channels/canary")
+    import dataclasses
+    with pytest.raises(ReleaseError, match="installer refuses"):
+        channels.manifest_json(store, dataclasses.replace(good, digest=D1 + "\n"))

@@ -67,6 +67,15 @@ still moves in `release-state`, which is the record readers use. The pointer rem
 ref was not written (`mirrored: false`), so the first write after the identity exists creates the
 ref instead of refusing it as moved by someone else.
 
+`release-state` is the trust root the installer reads, and today it is only as safe as push access
+to this repo. Executor jobs refuse to run from any branch but `main`, which stops a dispatch from a
+branch by accident, but anyone who can push a branch can change that check. **TODO(suraj):** the
+real guard is a ruleset on `release-state` whose only bypass is the release executor identity.
+That needs two steps in order: (1) create the identity, (2) have the executor jobs push
+`release-state` with its token instead of the job's `GITHUB_TOKEN` (today they use the latter, which
+a ruleset cannot tell apart from any other workflow here), then apply the ruleset. Until then the
+installer should also check that `generation` never goes down.
+
 ## Channels and rollback (V0-REL-02)
 
 Channels and their order come from infra-config `channels.toml`; which channels a repo ships on,
@@ -95,7 +104,8 @@ qq channel rollback ...    # the same command in depot's qq (entry point qq.comm
   and so is a rollback whose `[channel.rollback]` needs an approval: held, never done unchecked.
 - After every move, `channels.json` on `release-state` (schema `qq-channels/1`) says what each
   repo's channels name: commit, digest, generation, operation and time. The installer reads it
-  (V0-INS-01): `https://raw.githubusercontent.com/quirq-ai/release/release-state/channels.json`.
+  (V0-INS-01): `https://raw.githubusercontent.com/quirq-ai/release/refs/heads/release-state/channels.json` (the
+  `refs/heads/` form, so a tag named `release-state` can never be served instead).
 
 `tools/rollback_drill.py` ships two canaries per repo through the executor, rolls back, and checks
 that the ref, the pointer and `channels.json` all name the previous canary again, within 10
