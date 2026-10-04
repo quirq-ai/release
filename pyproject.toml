@@ -8,10 +8,16 @@ version = "0.1.0"
 description = "quirq infra (qq) release: lkgr, channel pointers, rollback and the daily canary."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+# The gardener's verdicts and config reader, pinned by commit (never copied).
+dependencies = [
+    "qqgarden @ git+https://github.com/quirq-ai/gardener@bad853c0464e0e56ae894ff3795cbb3e5e24ba48",
+]
 
 [project.optional-dependencies]
 test = ["pytest==9.1.1"]
+
+[project.scripts]
+qqrelease = "qqrelease.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

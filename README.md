@@ -16,18 +16,55 @@ Plan and every v0 item: [quirq-ai/infra-config](https://github.com/quirq-ai/infr
 
 ## Rules it lives by
 
-- Rules come from infra-config's `channels.toml` and `health.toml`, read through `qqcfg` at the
+- Rules come from infra-config's `channels.toml` and `health.toml`, read through infra-config's `qqcfg` (via the gardener's pinned reader) at the
   commit pinned in `pins.toml`. Changing them is a policy change for suraj.
 - Record an operation key before every external effect, so a retry never acts twice.
 - A missing signal means hold, never promote.
 - Schedules can be dropped: run off the hour, with a watchdog for missed runs.
 - GitHub-specific code sits behind the `backend` field (`github` now, `launchpad` later).
 
+## lkgr (V0-REL-01)
+
+`lkgr` is the newest main commit whose required post-submit builders are all green. "Required" and
+"green" are the gardener's definitions, read through `qqgarden` at a pinned commit: the repo's
+`postsubmit` builders triggered by `land` in infra-config `pipelines.toml`, and per builder and commit
+the newest run's newest attempt. Pending, missing and cancelled are not green, so a missing signal
+holds `lkgr` where it is. It moves forward along main only, except that if a re-run turns its own
+commit red it moves back to the newest all-green commit: it never names a red commit.
+
+```sh
+qqrelease lkgr --config <infra-config checkout> --state <state dir> [--publish] [--dry-run]
+qqrelease lkgr --config ... --state ... --backend local --target-root DIR --snapshot SNAP.json   # offline
+```
+
+The `lkgr` workflow runs it every 10 minutes, off the hour. Each move is an operation of the release
+executor (below). `tools/lkgr_demo.py` replays a growing main with late, red and re-run verdicts
+against local repos and checks `lkgr` moves on its own and is never red; presubmit runs it.
+
+## The release executor and its record
+
+Only the executor moves `lkgr` and `channels/*`. Every move is an **operation**: its key hashes the
+intent (repo, ref, from, to, digest) and the pointer's generation, and is committed and pushed to
+this repo's `release-state` branch **before** anything else changes. Then the target repo's git ref
+moves (compare-and-swap: it refuses if something else moved it), then the new pointer and the
+applied operation are recorded together. A retry with the same intent is a no-op; one that died
+after recording finishes the same operation.
+
+    release-state branch
+      pointers/<repo>/<ref>.json   what lkgr and each channel name (schema qq-pointer/1), with history
+      ops/<key>.json               every operation: recorded, applied or failed (schema qq-operation/1)
+
+On GitHub the ref is the branch `<ref>` in the target repo (`lkgr`, `channels/canary`), written
+with the executor's App token (`QQ_RELEASE_TOKEN`). gate's `qq-release-refs` rulesets let only
+that identity write them. **TODO(suraj):** the identity does not exist yet. Until it does, the ref
+write is skipped and the operation records `skipped: no release executor identity`; the pointer
+still moves in `release-state`, which is the record readers use.
+
 ## v0 status
 
 | Item | What | PR | State |
 |---|---|---|---|
-| V0-REL-01 | `lkgr` ref | | not started |
+| V0-REL-01 | `lkgr` ref | #2 | in review |
 | V0-REL-02 | Channel pointers and rollback | | not started |
 | V0-REL-03 | Daily canary pipeline v0 | | waits on V0-TST-04 |
 | V0-REL-04 | Daily canary report | | waits on V0-REL-03 |
@@ -37,4 +74,5 @@ stable and staged rollout (v2).
 
 ## Working here
 
-See [AGENTS.md](AGENTS.md). Run the checks with `python -m pytest`.
+See [AGENTS.md](AGENTS.md). Run the checks as CI does: clone infra-config at the `pins.toml` commit into
+`.qq/infra-config`, then `python -m pip install -e ".[test]" && python -m pytest`.
