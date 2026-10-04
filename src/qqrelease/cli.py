@@ -168,8 +168,9 @@ def add_channel(sub) -> None:
     _common(s, many_repos=False)
     s.add_argument("--channel", required=True)
     s.add_argument("--reason", default="")
-    s.add_argument("--from", dest="from_commit", default="",
-                   help="the commit the channel names now; refused if it has moved (a re-run is a no-op)")
+    s.add_argument("--from", dest="from_commit", required=True, metavar="COMMIT",
+                   help="the full commit the channel names now (channels.json); refused if it has moved, so "
+                        "a re-run or a second dispatch never rolls back twice")
     s.set_defaults(func=cmd_rollback)
     s = csub.add_parser("show", help="print channels.json: what every channel names")
     s.add_argument("--state", required=True)

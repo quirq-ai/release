@@ -78,7 +78,8 @@ def main(argv=None) -> int:
             start = time.monotonic()
             rc = cli.main(["channel", "rollback", "--config", args.config, "--state", str(state),
                            "--backend", "local", "--target-root", str(tmp / "targets"),
-                           "--repo", name, "--channel", CHANNEL, "--reason", "rollback drill"])
+                           "--repo", name, "--channel", CHANNEL, "--reason", "rollback drill",
+                           "--from", bad])
             elapsed = time.monotonic() - start
             tip = git("rev-parse", f"refs/heads/channels/{CHANNEL}", cwd=tmp / "targets" / name)
             ptr = store.pointer(name, channels.ref_of(CHANNEL))

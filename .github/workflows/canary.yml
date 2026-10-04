@@ -205,9 +205,13 @@ jobs:
           COMMIT: ${{ matrix.commit }}
         run: |
           title="Postmortem draft: canary held for $REPO ${COMMIT:0:12} on $DATE"
-          if [ -n "$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --label postmortem \
-                --search "\"$title\" in:title" --json number --jq '.[0].number')" ]; then
-            echo "already drafted"; exit 0
+          # Fail closed: if the lookup fails the step fails, rather than filing a duplicate. The list
+          # API (not search, which lags new issues) and an exact title match decide.
+          export TITLE="$title"
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --label postmortem --limit 500 \
+                       --json number,title --jq '[.[] | select(.title == env.TITLE)][0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "already drafted: #$existing"; exit 0
           fi
           qqrelease canary postmortem --config .qq/infra-config --state .qq/state --repo "$REPO" \
             --date "$DATE" --commit "$COMMIT" --failure-issue "$FAILURE_ISSUE" > postmortem.md
@@ -245,9 +249,11 @@ jobs:
           title="Canary report $DATE"
           gh label create canary-report --repo "$GITHUB_REPOSITORY" --color 0E8A16 \
             --description "daily canary report (V0-REL-04)" 2>/dev/null || true
-          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --label canary-report \
-                     --search "\"$title\" in:title" --json number,title \
-                     --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          # Fail closed (a failed lookup fails the step instead of filing a second issue for the day),
+          # through the list API, not search, which lags new issues; the exact title decides.
+          export TITLE="$title"
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --label canary-report --limit 500 \
+                     --json number,title --jq '[.[] | select(.title == env.TITLE)][0].number // empty')
           if [ -n "$number" ]; then
             gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file report.md   # a rerun the same day
           else

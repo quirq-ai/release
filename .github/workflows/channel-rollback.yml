@@ -27,9 +27,8 @@ on:
         required: true
         type: string
       from:
-        description: commit the channel names now (channels.json); refused if it moved, so a re-run is safe
-        required: false
-        default: ""
+        description: full commit the channel names now (channels.json); refused if it moved, so a re-run is safe
+        required: true
         type: string
 permissions:
   contents: read

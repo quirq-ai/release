@@ -134,7 +134,11 @@ def named_since(store: Store, ptr: Pointer, commit: str) -> bool:
 
 
 def plan_rollback(cfg: dict, store: Store, repo: str, channel: str, reason: str = "",
-                  actor: str = "local", from_commit: str = "") -> Operation:
+                  actor: str = "local", from_commit: str | None = None) -> Operation:
+    """from_commit (the CLI's required --from) must be the exact commit the channel names now.
+
+    None skips that check for library callers that already hold the store lock; any string,
+    including an empty one, must be a full commit id and match."""
     check_repo(cfg, repo, channel)
     rules = channel_cfg(cfg, channel).get("rollback", {})
     if rules.get("approval", "none") != "none":
@@ -143,7 +147,10 @@ def plan_rollback(cfg: dict, store: Store, repo: str, channel: str, reason: str 
     cur = store.pointer(repo, ref_of(channel))
     if not cur.commit:
         raise ReleaseError(f"{repo} {channel} names nothing yet: there is nothing to roll back")
-    if from_commit and not cur.commit.startswith(from_commit):
+    if from_commit is not None and not COMMIT.fullmatch(from_commit):
+        raise ReleaseError(f"--from wants the full 40-character commit {repo} {channel} names now, "
+                           f"got {from_commit!r}")
+    if from_commit is not None and cur.commit != from_commit:
         raise ReleaseError(f"{repo} {channel} names {cur.commit[:12]}, not {from_commit[:12]}: it has moved "
                            "(or this rollback already ran), so not rolling back")
     prev = rollback_target(cur)
