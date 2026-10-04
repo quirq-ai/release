@@ -337,6 +337,56 @@ def test_exit_codes_decide_whether_a_stage_ran(tmp_path, monkeypatch):
     for rc, recs in ((1, [{"exit_code": 0}]), (2, [{"exit_code": 1}]), (1, {"x": 1})):
         with pytest.raises(canary.CouldNotRun):
             runs(rc, recs)
+    # S4: an action that could not start on this machine is never the commit's verdict.
+    for recs in ([{"exit_code": 0}, {"exit_code": 127}], [{"exit_code": 126}],
+                 [{"capability": "fetch", "name": "toolchain-check", "exit_code": 1}]):
+        with pytest.raises(canary.CouldNotRun, match="could not start"):
+            runs(1, recs)
+    assert runs(1, [{"capability": "test", "name": "toolchain-check", "exit_code": 1}])[0] == 1
+
+
+def test_a_released_hold_is_built_again_and_a_retry_is_a_noop(world, config_root, capsys):
+    from qqrelease import cli
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    bad = passed(repo, shas[1])
+    bad["stages"][1]["ok"] = False
+    assert canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), bad, "2026-10-05").outcome == "held"
+    assert canary.select(cfg, store, repo).action == "noop"
+    base = ["canary", "release-hold", "--config", str(config_root), "--state", str(store.root), "--repo", repo]
+    for commit, reason in ((shas[1][:12], "runner lost its toolchain"), (shas[2], "runner lost its toolchain"),
+                           (shas[1], " ")):
+        assert cli.main(base + ["--commit", commit, "--reason", reason]) == 2      # prefix, not held, no why
+    assert canary.is_held(store, repo, shas[1])
+    assert cli.main(base + ["--commit", shas[1], "--reason", "runner lost its toolchain"]) == 0
+    first = json.loads(canary.held_path(store, repo, shas[1]).read_text())
+    key = first["releases"][0]["operation"]
+    op = store.op(key)
+    assert (op.kind, op.state, op.from_commit, op.generation) == ("release-hold", "applied", shas[1], 0)
+    assert canary.select(cfg, store, repo).action == "build"                    # built again
+    assert cli.main(base + ["--commit", shas[1], "--reason", "a retried dispatch"]) == 0
+    assert "already released" in capsys.readouterr().out
+    assert json.loads(canary.held_path(store, repo, shas[1]).read_text()) == first
+    # Held again later: the old release stays on record, and it takes a release of its own.
+    assert canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), bad, "2026-10-06").outcome == "held"
+    again = json.loads(canary.held_path(store, repo, shas[1]).read_text())
+    assert again["state"] == "held" and again["releases"] == first["releases"]
+    assert canary.select(cfg, store, repo).action == "noop"
+    outcome, key2 = canary.release_hold(store, repo, shas[1], "runner fixed again")
+    assert outcome == "released" and key2 != key and store.op(key2).generation == 1
+    # A record whose history was edited by hand never reports a release that did not happen.
+    hp = canary.held_path(store, repo, shas[1])
+    store.save({hp: json.dumps({**again, "state": "held", "releases": "oops"})}, "hand edit")
+    with pytest.raises(ReleaseError, match="changed by hand"):
+        canary.release_hold(store, repo, shas[1], "again")
+    assert canary.is_held(store, repo, shas[1])
+
+
+def test_a_hold_record_from_before_releases_still_holds(world):
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    store.save({canary.held_path(store, repo, shas[1]): json.dumps({"repo": repo, "commit": shas[1]})}, "old hold")
+    assert canary.is_held(store, repo, shas[1]) and canary.select(cfg, store, repo).action == "noop"
 
 
 def test_the_held_stage_and_digest_come_from_the_verdict(world):

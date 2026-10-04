@@ -262,6 +262,17 @@ def cmd_canary_postmortem(args) -> int:
     return 0
 
 
+def cmd_canary_release_hold(args) -> int:
+    """Release a held canary commit (a hold the machine caused): the next canary builds it again."""
+    store = Store(args.state, push=args.publish)
+    if args.repo not in canary.canary_repos(config.load(Path(args.config))):
+        raise ReleaseError(f"{args.repo!r} is not a canary repo in infra-config")
+    outcome, key = canary.release_hold(store, args.repo, args.commit, args.reason, actor=args.actor)
+    print(f"{outcome}: {args.repo} {args.commit[:12]} (operation {key[:12] or 'unknown'}); "
+          "the next canary run builds it again")
+    return 0
+
+
 def cmd_canary_toolchains(args) -> int:
     """`name=version` lines for the toolchains a checkout's manifest pins (for a workflow's outputs)."""
     if not (Path(args.src) / canary.MANIFEST).is_file():
@@ -313,6 +324,15 @@ def add_canary(sub) -> None:
     s.add_argument("--run-url", default="")
     s.add_argument("--date")
     s.set_defaults(func=cmd_canary_finish)
+    s = csub.add_parser("release-hold", help="release a held canary commit so the next canary builds it")
+    s.add_argument("--config", required=True)
+    s.add_argument("--state", required=True)
+    s.add_argument("--publish", action="store_true", help="push release-state")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--commit", required=True, metavar="COMMIT", help="the full held commit")
+    s.add_argument("--reason", required=True, help="why (recorded in the operation and the hold record)")
+    s.add_argument("--actor", default="local", help="who released it: a workflow run URL, or local")
+    s.set_defaults(func=cmd_canary_release_hold)
     s = csub.add_parser("toolchains", help="name=version for each toolchain the manifest pins")
     s.add_argument("--src", required=True)
     s.set_defaults(func=cmd_canary_toolchains)
