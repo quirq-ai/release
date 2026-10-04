@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "quirq infra (qq) release: lkgr, channel pointers, rollback and the daily canary."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 # The gardener's verdicts and config reader, pinned by commit (never copied).
 dependencies = [
     "qqgarden @ git+https://github.com/quirq-ai/gardener@bad853c0464e0e56ae894ff3795cbb3e5e24ba48",
