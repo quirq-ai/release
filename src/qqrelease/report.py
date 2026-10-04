@@ -28,7 +28,7 @@ def build(cfg: dict, store: Store, date: str, open_records: list[dict] | None = 
     """Markdown for `date`. `open_records` are open failure issues: [{number, title, url}], or None
     when they could not be read (said so, never shown as none)."""
     repos = canary.canary_repos(cfg)
-    rows, shipped, held, noop, missing = [], 0, 0, 0, []
+    rows, shipped, held, noop, errors, missing = [], 0, 0, 0, 0, []
     for repo in repos:
         path = canary.run_path(store, repo, date)
         if not path.is_file():
@@ -40,6 +40,7 @@ def build(cfg: dict, store: Store, date: str, open_records: list[dict] | None = 
         shipped += outcome == "shipped"
         held += outcome == "held"
         noop += outcome == "noop"
+        errors += outcome == "error"     # the pipeline failed, not the commit; the watchdog reruns it
         link = f"[run]({run['run_url']})" if run.get("run_url") else ""
         rows.append(f"| {repo} | **{outcome}** | `{run.get('commit', '')[:12]}` | `{run.get('digest', '')[:19]}` "
                     f"| {_cell(run.get('reason', ''))} {link} |")
@@ -53,7 +54,8 @@ def build(cfg: dict, store: Store, date: str, open_records: list[dict] | None = 
         records = "None."
     else:
         records = "\n".join(f"- [#{r['number']}]({r['url']}) {_cell(r['title'])}" for r in open_records)
-    head = f"{shipped} shipped, {held} held, {noop} no-op" + (f", {len(missing)} did not run" if missing else "")
+    head = (f"{shipped} shipped, {held} held, {noop} no-op" + (f", {errors} pipeline error" if errors else "")
+            + (f", {len(missing)} did not run" if missing else ""))
     return f"""# {title(date)}
 
 {head}.
