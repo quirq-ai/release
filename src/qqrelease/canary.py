@@ -27,7 +27,9 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -45,6 +47,12 @@ STAGES_SCHEMA = "qq-canary-stages/1"
 MANIFEST = "infra/repo.toml"
 # Fuzz smoke bounds. TODO(expert): move to infra-config fuzz.toml when V1-REL-02 adds real fuzzers.
 SMOKE_EXAMPLES = "1000"
+# S5: a commit whose canary could not be judged this many times (about a day of the schedule plus
+# the watchdog) is held as a possible runner fault, so a loop of errors ends with a record a person
+# sees. Product code can force an error (a test exiting 127), so errors cannot loop for ever.
+ERROR_LIMIT = 3
+RUNNER_FAULT = "possible runner fault"
+REASON_LIMIT = 500     # characters of a release's reason or requester kept in the records
 
 
 @dataclass
@@ -57,7 +65,8 @@ class Stage:
 
 
 class CouldNotRun(Exception):
-    """The adapter did not run to a verdict: a timeout, a crash, no results. Never a held canary."""
+    """The adapter did not run to a verdict: a timeout, a crash, no results. Not a verdict on the
+    commit; only ERROR_LIMIT of these in a row hold it, as a possible runner fault."""
 
 
 # Signals that an action could not start on this machine, so the commit was never judged: a command
@@ -150,20 +159,42 @@ def is_held(store: Store, repo: str, commit: str) -> bool:
         return True          # an unreadable hold still holds
 
 
-def release_hold(store: Store, repo: str, commit: str, reason: str, actor: str = "local",
+def _release_key(repo: str, commit: str, generation: int, previous: str) -> str:
+    """A release's key chains to the release before it, so it names exactly one hold of the commit."""
+    intent = {"kind": "release-hold", "repo": repo, "commit": commit, "generation": generation,
+              "previous": previous}
+    blob = json.dumps(intent, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(b"qq-release-hold/1\n" + blob).hexdigest()[:32]
+
+
+def _one_line(text: str, what: str) -> str:
+    text = " ".join(str(text).split())
+    if not text:
+        raise ReleaseError(f"say {what}; it goes in the operation and the record")
+    if len(text) > REASON_LIMIT:
+        raise ReleaseError(f"{what} is {len(text)} characters; keep it to {REASON_LIMIT} and link to detail")
+    return text
+
+
+def release_hold(store: Store, repo: str, commit: str, reason: str, released_before: int,
+                 actor: str = "local", requested_by: str = "local",
                  at: str | None = None) -> tuple[str, str]:
     """Release a held canary commit so the next canary builds it again (S4: a hold the machine caused).
 
-    Keyed like every executor write: the operation's key covers the repo, the commit and how many
-    times it was released before, so a retried dispatch is a no-op and a later hold of the same
-    commit needs its own release. Returns (outcome, key): "released" or "already released"."""
+    The dispatch names the hold it releases: `released_before` is how many times this commit was
+    released before this hold (0 for its first hold). Each release is a keyed operation chained to
+    the release before it, so a retried dispatch is a no-op, and a dispatch for an earlier hold
+    (re-running a finished run after the commit was held again) is refused rather than releasing
+    the new hold. Returns (outcome, key): "released" or "already released"."""
     from qqrelease import executor
     from qqrelease.operations import Operation
 
     if not channels.COMMIT.fullmatch(commit):
         raise ReleaseError(f"--commit wants the full 40-character held commit, got {commit!r}")
-    if not reason.strip():
-        raise ReleaseError("say why the hold is released (--reason); it goes in the operation and the record")
+    reason = _one_line(reason, "why the hold is released (--reason)")
+    requested_by = _one_line(requested_by, "who asked for the release (--requested-by)")
+    if released_before < 0:
+        raise ReleaseError(f"--released-before is a count, got {released_before}")
     p = held_path(store, repo, commit)
     if not p.is_file():
         raise ReleaseError(f"{repo} has no held canary at {commit[:12]}: nothing to release")
@@ -173,26 +204,75 @@ def release_hold(store: Store, repo: str, commit: str, reason: str, actor: str =
             raise ValueError("not an object")
     except (OSError, ValueError) as e:
         raise ReleaseError(f"{p.relative_to(store.root)} is unreadable ({e}); fix it by hand") from None
-    releases = doc.get("releases") if isinstance(doc.get("releases"), list) else []
-    if doc.get("state", "held") == "released":
-        last = releases[-1] if releases and isinstance(releases[-1], dict) else {}
-        return "already released", str(last.get("operation", ""))
+    releases = doc.get("releases", [])          # absent: a hold from before releases existed
+    if not isinstance(releases, list) or not all(isinstance(r, dict) for r in releases):
+        raise ReleaseError(f"{p.relative_to(store.root)} has a malformed `releases` history; fix it by hand")
+    # Every recorded release must be an applied operation chained to the one before it.
+    previous = ""
+    for i, r in enumerate(releases):
+        key = str(r.get("operation", ""))
+        op = store.op(key) if re.fullmatch(r"[0-9a-f]{32}", key) else None
+        if (op is None or op.kind != "release-hold" or op.state != "applied" or op.repo != repo
+                or op.from_commit != commit or key != _release_key(repo, commit, i, previous)):
+            raise ReleaseError(f"{p.relative_to(store.root)}: release {i + 1} is not an applied, chained "
+                               "release-hold operation; its history was changed by hand, so fix the record")
+        previous = key
+    released = doc.get("state", "held") == "released"
+    holds_before = len(releases) - 1 if released else len(releases)
+    if released_before != holds_before:
+        raise ReleaseError(
+            f"this dispatch releases the hold after {released_before} earlier release(s), but "
+            f"{repo} {commit[:12]} is {'released' if released else 'held'} after {holds_before}: the hold "
+            "changed since; look at the hold record and dispatch again")
+    if released:
+        return "already released", previous
     at = at or executor.now_iso()
+    key = _release_key(repo, commit, len(releases), previous)
     op = Operation(kind="release-hold", repo=repo, ref=f"{CHANNEL}/held", from_commit=commit,
                    to_commit=commit, generation=len(releases), digest=str(doc.get("digest", "")),
-                   reason=reason, actor=actor, state="applied", recorded_at=at, applied_at=at,
+                   reason=reason, actor=f"{actor} (requested by {requested_by})", state="applied",
+                   recorded_at=at, applied_at=at, key=key,
                    mirror="skipped: no ref moves; the next canary builds this commit again")
-    done = store.op(op.key)
-    if done is not None and done.state == "applied":
-        # The record still holds although this release already applied: its history was edited.
-        raise ReleaseError(f"{p.relative_to(store.root)} still holds but release {op.key[:12]} already "
-                           "applied; its `releases` history was changed by hand, so fix the record")
+    if store.op(key) is not None:
+        raise ReleaseError(f"release {key[:12]} is already recorded but {p.relative_to(store.root)} still "
+                           "holds; its history was changed by hand, so fix the record")
     doc = {**doc, "state": "released",
-           "releases": releases + [{"operation": op.key, "at": at, "actor": actor, "reason": reason}]}
-    store.save({store.op_path(op.key): op.to_json(),
+           "releases": releases + [{"operation": key, "at": at, "actor": actor,
+                                    "requested_by": requested_by, "reason": reason}]}
+    store.save({store.op_path(key): op.to_json(),
                 p: json.dumps(doc, sort_keys=True, indent=2) + "\n"},
-               f"release-hold {repo} {commit[:12]} ({op.key[:12]})")
-    return "released", op.key
+               f"release-hold {repo} {commit[:12]} ({key[:12]})")
+    return "released", key
+
+
+def errors_path(store: Store, repo: str, commit: str) -> Path:
+    return held_path(store, repo, commit).parent.parent / "errors" / f"{commit}.json"
+
+
+def _hold_record(store: Store, sel: "Selection", date: str, stage: str, digest: str, run_url: str,
+                 **extra) -> str:
+    """The hold record, keeping the commit's earlier releases (a hold after a release)."""
+    hp = held_path(store, sel.repo, sel.commit)
+    releases = []
+    if hp.is_file():
+        try:
+            old = json.loads(hp.read_text())
+            releases = old.get("releases", []) if isinstance(old, dict) else []
+            releases = releases if isinstance(releases, list) else []
+        except (OSError, ValueError):
+            pass
+    return json.dumps({"repo": sel.repo, "commit": sel.commit, "date": date, "stage": stage, "state": "held",
+                       "digest": digest, "run_url": run_url, "releases": releases, **extra},
+                      sort_keys=True, indent=2) + "\n"
+
+
+def _releases_of(store: Store, repo: str, commit: str) -> int:
+    try:
+        doc = json.loads(held_path(store, repo, commit).read_text())
+        r = doc.get("releases") if isinstance(doc, dict) else None
+        return len(r) if isinstance(r, list) else 0
+    except (OSError, ValueError):
+        return 0
 
 
 def run_path(store: Store, repo: str, date: str) -> Path:
@@ -358,10 +438,29 @@ STAGES = ("build", "verify", "fuzz-smoke", "deploy-probe")
 TERMINAL = ("shipped", "held")
 
 
+def _stage_rows(stages: dict | None, sel: "Selection") -> list[dict]:
+    """The worker's known stages for this commit, reduced to plain values: the worker runs product
+    code, so its document may have any shape and nothing downstream may trust it."""
+    if not isinstance(stages, dict) or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
+        return []
+    rows = stages.get("stages")
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if isinstance(r, dict) and r.get("name") in STAGES:
+            try:
+                seconds = round(float(r.get("seconds", 0)), 1)
+                seconds = seconds if math.isfinite(seconds) else 0.0
+            except Exception:       # TypeError, ValueError, OverflowError (a 400-digit int)...
+                seconds = 0.0
+            out.append({"name": r["name"], "ok": r.get("ok") is True, "ran": r.get("ran") is not False,
+                        "detail": str(r.get("detail", ""))[:20000], "seconds": seconds})
+    return out
+
+
 def verdict(stages: dict | None, sel: Selection) -> tuple[str, str]:
     """What the worker's stage results say, recomputed here: the worker runs product code, so its own
     `ok` is never trusted. Returns ("pass" | "fail" | "skip" | "missing", detail)."""
-    if stages is None or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
+    if not isinstance(stages, dict) or stages.get("repo") != sel.repo or stages.get("commit") != sel.commit:
         return "missing", "the worker left no stage results for this commit"
     if stages.get("skip"):
         return "skip", str(stages["skip"])
@@ -392,34 +491,46 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
                     reason=sel.reason, run_url=run_url, started_at=started_at or at, finished_at=at)
     files: dict[Path, str] = {}
     if sel.action == "build":
-        v, detail = verdict(stages, sel)
+        try:
+            v, detail = verdict(stages, sel)
+        except Exception as e:   # a document of the wrong shape: not judged, and counted below (S5)
+            v, detail = "missing", f"the stage results are malformed ({type(e).__name__})"
         if v != "missing":
             # Only what verdict() judged: the four known stages, and a digest only if well formed.
-            run.stages = [s for s in stages.get("stages", []) if isinstance(s, dict) and s.get("name") in STAGES]
+            run.stages = _stage_rows(stages, sel)
             digest = str(stages.get("digest", ""))
             run.digest = digest if channels.DIGEST.fullmatch(digest) else ""
         if v == "skip":
             run.reason = detail
         elif v == "missing":
             run.outcome, run.reason = "error", f"not judged: {detail}; the watchdog runs this day again"
+            # S5: count the errors on this commit since its last release; at the limit, hold it.
+            ep = errors_path(store, sel.repo, sel.commit)
+            generation = _releases_of(store, sel.repo, sel.commit)
+            try:
+                seen = json.loads(ep.read_text())
+                count = int(seen["count"]) if seen.get("generation") == generation else 0
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                count = 0
+            count += 1
+            files[ep] = json.dumps({"repo": sel.repo, "commit": sel.commit, "generation": generation,
+                                    "count": count, "last": run.reason, "date": date},
+                                   sort_keys=True, indent=2) + "\n"
+            if count >= ERROR_LIMIT:
+                got = _stage_rows(stages, sel)          # only this commit's own results
+                stuck = next((s["name"] for s in got if s.get("ok") is False), "pipeline")
+                run.stages = got or [{"name": "pipeline", "ok": False, "seconds": 0, "detail": detail}]
+                run.outcome = "held"
+                run.reason = (f"held after {count} runs that could not judge it ({RUNNER_FAULT}): {detail}")
+                files[held_path(store, sel.repo, sel.commit)] = _hold_record(
+                    store, sel, date, stuck, "", run_url, tag=RUNNER_FAULT, errors=count)
         elif v == "fail":
             failed = next(s for s in run.stages if s.get("name") == detail)
             first = (failed.get("detail") or "").splitlines()
             run.outcome = "held"
             run.reason = f"held at {detail}: {first[0] if first else ''}"
-            hp = held_path(store, sel.repo, sel.commit)
-            releases = []
-            if hp.is_file():                # held before and released: keep that history
-                try:
-                    old = json.loads(hp.read_text())
-                    releases = old.get("releases", []) if isinstance(old, dict) else []
-                    releases = releases if isinstance(releases, list) else []
-                except (OSError, ValueError):
-                    pass
-            files[hp] = json.dumps(
-                {"repo": sel.repo, "commit": sel.commit, "date": date, "stage": detail, "state": "held",
-                 "digest": run.digest, "run_url": run_url, "releases": releases},
-                sort_keys=True, indent=2) + "\n"
+            files[held_path(store, sel.repo, sel.commit)] = _hold_record(
+                store, sel, date, detail, run.digest, run_url)
         else:
             ref = channels.ref_of(CHANNEL)
             try:
@@ -438,6 +549,8 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
                 run.stages = run.stages + [{"name": "promote", "ok": True, "seconds": 0, "detail": detail}]
                 run.reason = f"shipped {sel.commit[:12]} {run.digest}"
             except ReleaseError as e:
+                # Not counted towards ERROR_LIMIT: every stage passed, so the commit is not in doubt;
+                # the executor or the state store is, and the job going red says so.
                 run.outcome = "error"
                 run.reason = f"passed every stage but the promote failed: {e}; the watchdog runs this day again"
     path = run_path(store, sel.repo, date)
@@ -469,8 +582,8 @@ def runs_on(store: Store, repo: str, date: str) -> list[dict]:
 
 def missing_runs(cfg: dict, store: Store, date: str) -> list[str]:
     """Canary repos with no run record for `date`: what the watchdog starts."""
-    # TODO(expert): a day that keeps ending in error (say a worker that always reports the wrong
-    # commit) is rerun twice a day without escalating; v1 should file a failure record after N.
+    # A day that keeps ending in error is rerun; after ERROR_LIMIT errors on one commit, finish holds
+    # it as a possible runner fault, which files the failure record (S5).
     def judged(r: str) -> bool:
         p = run_path(store, r, date)
         return p.is_file() and json.loads(p.read_text()).get("outcome") != "error"
@@ -507,10 +620,13 @@ def postmortem_draft(cfg_root: Path, run: CanaryRun, failure_issue: str = "") ->
 
 
 def _postmortem_body(run: CanaryRun, failure_issue: str) -> str:
-    failed = next((s for s in run.stages if not s["ok"]), {"name": "?", "detail": ""})
-    rows = "\n".join(f"| {s['name']} | {'pass' if s['ok'] else '**fail**'} | {s['seconds']} s |"
-                     for s in run.stages)
-    detail = failed["detail"].replace("```", "'''")
+    failed = next((s for s in run.stages if isinstance(s, dict) and not s.get("ok")),
+                  {"name": "pipeline", "detail": ""})
+    rows = "\n".join(f"| {s.get('name', '?')} | {'pass' if s.get('ok') else '**fail**'} | {s.get('seconds', 0)} s |"
+                     for s in run.stages if isinstance(s, dict))
+    detail = str(failed.get("detail", "")).replace("```", "'''")
+    fault = (f"\n\nThis hold is tagged **{RUNNER_FAULT}**: the canary could not judge the commit several "
+             "times in a row. Check the runner before blaming the commit." if RUNNER_FAULT in run.reason else "")
     return f"""# Postmortem: canary held for {run.repo} at {failed['name']} ({run.date})
 
 **Trigger:** canary-deploy-failed
@@ -544,7 +660,8 @@ from lkgr and stopped at the **{failed['name']}** stage. Nothing was deployed to
 ## Impact
 
 None outside the canary test environment: a held canary is never deployed (plan §5.8). lkgr's commit
-`{run.commit[:12]}` will not be retried; the next canary waits for lkgr to move.
+`{run.commit[:12]}` is skipped until lkgr moves, or until the hold is released with the
+`canary-release-hold` workflow because the machine, not the commit, was at fault.{fault}
 
 ## Root cause and trigger
 
