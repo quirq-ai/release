@@ -19,7 +19,8 @@ Stages, in order; the first failure stops the pipeline and the previous canary s
 The stages after select run on a worker with no write access (`run_stages`); `finish` records the
 outcome on the release-state branch and promotes, under the executor's lock. Every run leaves a
 record, `canary/<repo>/runs/<date>.json` (schema qq-canary-run/1), which the daily report reads
-(V0-REL-04); every held commit leaves `canary/<repo>/held/<commit>.json` so it is not retried.
+(V0-REL-04); every held commit leaves `canary/<repo>/held/<commit>.json` so it is not retried
+until `release_hold` (the `canary-release-hold` workflow) releases it.
 """
 from __future__ import annotations
 
@@ -57,6 +58,20 @@ class Stage:
 
 class CouldNotRun(Exception):
     """The adapter did not run to a verdict: a timeout, a crash, no results. Never a held canary."""
+
+
+# Signals that an action could not start on this machine, so the commit was never judged: a command
+# that is not there (127) or not executable (126; the runner also records 127 for an OSError), and
+# the adapter's own check that the machine has the pinned toolchain. All are exit codes and fields
+# that qqrecipes and its adapters write, never output text.
+COULD_NOT_START = (126, 127)
+TOOLCHAIN_CHECK = ("fetch", "toolchain-check")
+
+
+def _could_not_start(r: dict) -> bool:
+    if r.get("exit_code") in COULD_NOT_START:
+        return True
+    return (r.get("capability"), r.get("name")) == TOOLCHAIN_CHECK and r.get("exit_code") not in (None, 0)
 
 
 def _failed(r: dict) -> bool:
@@ -124,6 +139,60 @@ def held_path(store: Store, repo: str, commit: str) -> Path:
     return store.root / "canary" / repo / "held" / f"{commit}.json"
 
 
+def is_held(store: Store, repo: str, commit: str) -> bool:
+    """Held and not released: a hold record with no `state`, from before releases existed, holds."""
+    p = held_path(store, repo, commit)
+    if not p.is_file():
+        return False
+    try:
+        return json.loads(p.read_text()).get("state", "held") != "released"
+    except (OSError, ValueError, AttributeError):
+        return True          # an unreadable hold still holds
+
+
+def release_hold(store: Store, repo: str, commit: str, reason: str, actor: str = "local",
+                 at: str | None = None) -> tuple[str, str]:
+    """Release a held canary commit so the next canary builds it again (S4: a hold the machine caused).
+
+    Keyed like every executor write: the operation's key covers the repo, the commit and how many
+    times it was released before, so a retried dispatch is a no-op and a later hold of the same
+    commit needs its own release. Returns (outcome, key): "released" or "already released"."""
+    from qqrelease import executor
+    from qqrelease.operations import Operation
+
+    if not channels.COMMIT.fullmatch(commit):
+        raise ReleaseError(f"--commit wants the full 40-character held commit, got {commit!r}")
+    if not reason.strip():
+        raise ReleaseError("say why the hold is released (--reason); it goes in the operation and the record")
+    p = held_path(store, repo, commit)
+    if not p.is_file():
+        raise ReleaseError(f"{repo} has no held canary at {commit[:12]}: nothing to release")
+    try:
+        doc = json.loads(p.read_text())
+        if not isinstance(doc, dict):
+            raise ValueError("not an object")
+    except (OSError, ValueError) as e:
+        raise ReleaseError(f"{p.relative_to(store.root)} is unreadable ({e}); fix it by hand") from None
+    releases = doc.get("releases") if isinstance(doc.get("releases"), list) else []
+    if doc.get("state", "held") == "released":
+        last = releases[-1] if releases and isinstance(releases[-1], dict) else {}
+        return "already released", str(last.get("operation", ""))
+    at = at or executor.now_iso()
+    op = Operation(kind="release-hold", repo=repo, ref=f"{CHANNEL}/held", from_commit=commit,
+                   to_commit=commit, generation=len(releases), digest=str(doc.get("digest", "")),
+                   reason=reason, actor=actor, state="applied", recorded_at=at, applied_at=at,
+                   mirror="skipped: no ref moves; the next canary builds this commit again")
+    done = store.op(op.key)
+    if done is not None and done.state == "applied":
+        return "already released", op.key
+    doc = {**doc, "state": "released",
+           "releases": releases + [{"operation": op.key, "at": at, "actor": actor, "reason": reason}]}
+    store.save({store.op_path(op.key): op.to_json(),
+                p: json.dumps(doc, sort_keys=True, indent=2) + "\n"},
+               f"release-hold {repo} {commit[:12]} ({op.key[:12]})")
+    return "released", op.key
+
+
 def run_path(store: Store, repo: str, date: str) -> Path:
     store.pointer_path(repo, "x")
     if len(date) != 10:
@@ -140,7 +209,7 @@ def select(cfg: dict, store: Store, repo: str) -> Selection:
     if lkgr.commit == canary.commit:
         return Selection(repo, "noop", lkgr.commit, canary.commit,
                          f"lkgr has not moved since the last canary ({lkgr.commit[:12]})")
-    if held_path(store, repo, lkgr.commit).is_file():
+    if is_held(store, repo, lkgr.commit):
         return Selection(repo, "noop", lkgr.commit, canary.commit,
                          f"lkgr names {lkgr.commit[:12]}, which an earlier canary held; waiting for lkgr to move")
     if any(b.get("commit") == lkgr.commit for b in canary.rolled_back):
@@ -171,6 +240,10 @@ def _recipes(goal: str, src: Path, out: Path, toolchains: list[str], env: dict |
         raise CouldNotRun(f"qqrecipes {goal} left no results ({type(e).__name__}, exit {p.returncode}):\n{tail}") from None
     # Exit codes decide, never output text: 0 passed; 1 with a failing record ran and failed. Anything
     # else (a crash, an adapter or manifest that could not load, 1 with nothing failing) did not run.
+    stuck = [r for r in records if isinstance(r, dict) and _could_not_start(r)]
+    if stuck:
+        names = ", ".join(f"{r.get('capability')}:{r.get('name')} (exit {r.get('exit_code')})" for r in stuck[:5])
+        raise CouldNotRun(f"qqrecipes {goal}: an action could not start on this machine: {names}:\n{tail}")
     if p.returncode == 0 or (p.returncode == 1 and any(_failed(r) for r in records if isinstance(r, dict))):
         return p.returncode, records, tail
     raise CouldNotRun(f"qqrecipes {goal} exited {p.returncode} without a failing action:\n{tail}")
@@ -332,9 +405,18 @@ def finish(cfg: dict, store: Store, mirror, sel: Selection, stages: dict | None,
             first = (failed.get("detail") or "").splitlines()
             run.outcome = "held"
             run.reason = f"held at {detail}: {first[0] if first else ''}"
-            files[held_path(store, sel.repo, sel.commit)] = json.dumps(
-                {"repo": sel.repo, "commit": sel.commit, "date": date, "stage": detail,
-                 "digest": run.digest, "run_url": run_url}, sort_keys=True, indent=2) + "\n"
+            hp = held_path(store, sel.repo, sel.commit)
+            releases = []
+            if hp.is_file():                # held before and released: keep that history
+                try:
+                    old = json.loads(hp.read_text())
+                    releases = old.get("releases", []) if isinstance(old, dict) else []
+                except (OSError, ValueError):
+                    pass
+            files[hp] = json.dumps(
+                {"repo": sel.repo, "commit": sel.commit, "date": date, "stage": detail, "state": "held",
+                 "digest": run.digest, "run_url": run_url, "releases": releases},
+                sort_keys=True, indent=2) + "\n"
         else:
             ref = channels.ref_of(CHANNEL)
             try:

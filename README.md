@@ -129,8 +129,8 @@ first failure holds the canary and the previous one stays in place:
 | promote | the executor moves `channels/canary` to the commit and digest, recording the operation key first | `finish` job, under the `release-channels` lock |
 
 Every run leaves `canary/<repo>/runs/<date>.json` (schema `qq-canary-run/1`) on `release-state`, and
-a held commit leaves `canary/<repo>/held/<commit>.json` so it is never retried; the next canary
-waits for lkgr to move. Each held canary gets a failure record mirrored to a `qq-failure` issue
+a held commit leaves `canary/<repo>/held/<commit>.json` so it is not retried; the next canary
+waits for lkgr to move, or for the hold to be released (below). Each held canary gets a failure record mirrored to a `qq-failure` issue
 (test-pipelines' `failure` action, V0-TST-04) and a postmortem draft issue labelled `postmortem`
 from infra-config's template (trigger `canary-deploy-failed`); v0 fills it from captured evidence,
 and an agent completes it in v1. Stage results go to the results store through the sink (run kind
@@ -144,11 +144,20 @@ written), the outcome is `error`: nothing is held, the job goes red, and the day
 run. The day's verdict stays on top of its record (a hold always does) and later runs are kept under `later`;
 rerunning `finish` after a ship records the ship again, never a hold.
 
-Exit codes cannot always tell a broken commit from a broken machine, so the split has two known
-limits in v0. A commit that breaks its own `infra/repo.toml` makes qqrecipes stop before writing
-results, so it reads as `error` and is rerun rather than held (the lkgr gate normally stops such a
-commit first). A runner fault that surfaces as a failing action (a missing toolchain, exit 127) is
-held; whoever triages the hold issue releases it once the machine is fixed.
+An action that could not start on the machine is `error` too: exit 126 or 127 (the runner records
+127 when a command is missing), or the adapter's `fetch:toolchain-check` failing (the machine lacks
+the pinned toolchain). These are exit codes and action names qqrecipes writes, never output text.
+A product test that itself exits 127 therefore reads as `error` and is rerun, never shipped.
+
+Exit codes still cannot always tell a broken commit from a broken machine. A commit that breaks its
+own `infra/repo.toml` makes qqrecipes stop before writing results, so it reads as `error` and is
+rerun rather than held (the lkgr gate normally stops such a commit first). A machine fault that
+looks like an ordinary failing action is held. Once the machine is fixed, release that hold with the
+`canary-release-hold` workflow (repo, full held commit, reason), which runs
+`qqrelease canary release-hold`: from main only, it records a keyed `release-hold` operation and
+marks the hold record released in one release-state commit, and the next canary builds the commit
+again. A retried dispatch is a no-op; if the commit is held again, it needs a release of its own.
+Close the hold's failure issue by hand with what was wrong with the machine.
 
 GitHub may drop a scheduled run, so `canary-watchdog` checks twice a day that every canary repo has
 a verdict or no-op for today and, if one is missing and no canary is in flight, starts `canary` by hand.
