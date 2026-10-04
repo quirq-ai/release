@@ -104,8 +104,10 @@ qq channel rollback ...    # the same command in depot's qq (entry point qq.comm
   and so is a rollback whose `[channel.rollback]` needs an approval: held, never done unchecked.
 - After every move, `channels.json` on `release-state` (schema `qq-channels/1`) says what each
   repo's channels name: commit, digest, generation, operation and time. The installer reads it
-  (V0-INS-01): `https://raw.githubusercontent.com/quirq-ai/release/refs/heads/release-state/channels.json` (the
-  `refs/heads/` form, so a tag named `release-state` can never be served instead).
+  (V0-INS-01). Read it from
+  `https://raw.githubusercontent.com/quirq-ai/release/refs/heads/release-state/channels.json`: the
+  `refs/heads/` form means a tag named `release-state` can never be served instead. (The installer's
+  own default still uses the bare name; that change belongs to the installer.)
 
 `tools/rollback_drill.py` ships two canaries per repo through the executor, rolls back, and checks
 that the ref, the pointer and `channels.json` all name the previous canary again, within 10

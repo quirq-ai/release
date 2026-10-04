@@ -149,6 +149,10 @@ def plan_rollback(cfg: dict, store: Store, repo: str, channel: str, reason: str 
     prev = rollback_target(cur)
     if prev is None:
         raise ReleaseError(f"{repo} {channel} has no previous value to roll back to")
+    if not COMMIT.fullmatch(str(prev["commit"])) or not DIGEST.fullmatch(str(prev["digest"])):
+        # Checked before the ref moves, not after: history written before these rules existed.
+        raise ReleaseError(f"{repo} {channel}'s previous value {prev['commit']!r} {prev['digest']!r} is "
+                           "one the installer refuses; not rolling back to it")
     return executor.plan(store, "rollback", repo, ref_of(channel), prev["commit"], digest=prev["digest"],
                          reason=reason or f"roll {channel} back from {cur.commit[:12]} to {prev['commit'][:12]}",
                          actor=actor)

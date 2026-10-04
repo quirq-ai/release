@@ -267,3 +267,16 @@ def test_nothing_the_installer_would_refuse_is_published(world):
     import dataclasses
     with pytest.raises(ReleaseError, match="installer refuses"):
         channels.manifest_json(store, dataclasses.replace(good, digest=D1 + "\n"))
+
+
+
+def test_a_rollback_target_the_installer_would_refuse_is_never_written(world):
+    cfg, store, mirror, repo, shas, d = world
+    ship(cfg, store, mirror, repo, shas[0], D1)
+    ship(cfg, store, mirror, repo, shas[1], D2)
+    ptr = store.pointer(repo, "channels/canary")
+    ptr.history[0]["digest"] = D1 + "\n"          # history written before the rules existed
+    store.save({store.root / "pointers" / repo / "channels" / "canary.json": ptr.to_json()}, "plant")
+    with pytest.raises(ReleaseError, match="installer refuses"):
+        channels.plan_rollback(cfg, store, repo, "canary")
+    assert git("rev-parse", "refs/heads/channels/canary", cwd=d) == shas[1]
