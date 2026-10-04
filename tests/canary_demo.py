@@ -11,13 +11,15 @@ canary: its /health answers 500, which a health.toml probe requires. Checks:
 - days 1-3 and 5-8 ship on their own: `channels/canary` names the day's commit and a digest;
 - day 4 is held at deploy-probe: the canary still names day 3, and the held commit is recorded;
 - a ninth run with lkgr unmoved records a no-op instead of rebuilding;
-- every day has a run record (what the daily report reads).
+- every day has a run record and a daily report (V0-REL-04) that says what shipped or was held.
 
     tests/canary_demo.py --config .qq/infra-config --toolchain python=ROOT
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -112,10 +114,14 @@ def main(argv=None) -> int:
                 if rc != 0:
                     failures.append(f"{d}: canary stages exited {rc}")
             rc = cli.main(["canary", "finish", *common, "--backend", "local", "--target-root", str(tmp / "targets"),
-                           "--repo", repo, "--plan", str(work / "plan.json"), "--stages-dir", str(work / "stages"),
+                           "--plan", str(work / "plan.json"), "--stages-dir", str(work / "stages"),
                            "--held-out", str(work / "held.json"), "--date", d])
             if rc != 0:
                 failures.append(f"{d}: canary finish exited {rc}")
+            with contextlib.redirect_stdout(io.StringIO()):              # the report text is checked below
+                rc = cli.main(["canary", "report", *common, "--date", d])
+            if rc != 0:
+                failures.append(f"{d}: canary report failed")
             canary_now = store.pointer(repo, "channels/canary")
             run = json.loads(canary.run_path(store, repo, d).read_text())
             head = git("rev-parse", "HEAD", cwd=src)
@@ -140,11 +146,18 @@ def main(argv=None) -> int:
         runs = sorted(p.name for p in (state / "canary" / repo / "runs").glob("*.json"))
         if len(runs) != DAYS:
             failures.append(f"{len(runs)} run records for {DAYS} days")
+        reports = sorted((state / "reports").glob("*.md"))
+        if len(reports) != DAYS:
+            failures.append(f"{len(reports)} daily reports for {DAYS} days")
+        bad = (state / "reports" / f"{(START + timedelta(days=BAD_DAY - 1)).isoformat()}.md").read_text()
+        if f"| {repo} | **held** |" not in bad:
+            failures.append("the bad day's report does not say the canary was held")
     if failures:
         print("FAILED:\n  " + "\n  ".join(failures), file=sys.stderr)
         return 1
     print(f"ok: {DAYS - 1} daily canaries shipped with no human touch, the planted bad canary on day "
-          f"{BAD_DAY} was held at deploy-probe with the previous canary kept, and a rerun was a no-op")
+          f"{BAD_DAY} was held at deploy-probe with the previous canary kept, a rerun was a no-op, and "
+          f"each of the {DAYS} days has its report")
     return 0
 
 

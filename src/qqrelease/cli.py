@@ -20,7 +20,7 @@ from qqgarden import backends as garden_backends
 from qqgarden.errors import GardenerError
 from qqgarden.postsubmit import parse_time
 
-from qqrelease import backends, canary, channels, config, executor, lkgr
+from qqrelease import backends, canary, channels, config, executor, lkgr, report
 from qqrelease.errors import ReleaseError
 from qqrelease.store import Store
 
@@ -272,6 +272,21 @@ def cmd_canary_toolchains(args) -> int:
     return 0
 
 
+def cmd_canary_report(args) -> int:
+    """The day's report (V0-REL-04): writes reports/<date>.md on release-state and prints it."""
+    cfg = config.load(Path(args.config))
+    store = Store(args.state, push=args.publish)
+    records = None
+    if args.open_records:
+        try:
+            records = json.loads(Path(args.open_records).read_text())
+        except (OSError, ValueError):
+            records = None
+    path = report.write(cfg, store, _today(args), records)
+    print(path.read_text(), end="")
+    return 0
+
+
 def add_canary(sub) -> None:
     c = sub.add_parser("canary", help="the daily canary pipeline (V0-REL-03)")
     csub = c.add_subparsers(dest="canary_cmd", required=True)
@@ -300,6 +315,13 @@ def add_canary(sub) -> None:
     s = csub.add_parser("toolchains", help="name=version for each toolchain the manifest pins")
     s.add_argument("--src", required=True)
     s.set_defaults(func=cmd_canary_toolchains)
+    s = csub.add_parser("report", help="the daily canary report (V0-REL-04)")
+    s.add_argument("--config", required=True)
+    s.add_argument("--state", required=True)
+    s.add_argument("--publish", action="store_true")
+    s.add_argument("--date")
+    s.add_argument("--open-records", help="JSON [{number, title, url}] of open failure issues")
+    s.set_defaults(func=cmd_canary_report)
     s = csub.add_parser("missing", help="canary repos with no run record for the day (the watchdog)")
     s.add_argument("--config", required=True)
     s.add_argument("--state", required=True)

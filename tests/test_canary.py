@@ -255,3 +255,42 @@ def test_a_repo_without_a_manifest_is_a_noop_not_a_held_canary(world, tmp_path):
     run = canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), doc, "2026-10-05")
     assert run.outcome == "noop" and "not onboarded" in run.reason
     assert not canary.held_path(store, repo, shas[1]).exists()
+
+
+def test_daily_report(world):
+    from qqrelease import report
+    cfg, store, mirror, repo, shas = world
+    lkgr_to(store, mirror, repo, shas[1])
+    canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), passed(repo, shas[1]), "2026-10-05",
+                  run_url="https://example.invalid/runs/1")
+    text = report.build(cfg, store, "2026-10-05", [{"number": 7, "title": "Canary held | x", "url": "u"}])
+    assert f"| {repo} | **shipped** | `{shas[1][:12]}`" in text
+    assert "[#7](u) Canary held / x" in text
+    others = [r for r in canary.canary_repos(cfg) if r != repo]
+    for r in others:
+        assert f"| {r} | **no run** |" in text
+    assert "Could not read" in report.build(cfg, store, "2026-10-05", None)
+    path = report.write(cfg, store, "2026-10-05", [])
+    assert path.read_text().startswith("# Canary report 2026-10-05")
+
+
+def test_the_report_shows_errors_and_unreadable_records_and_keeps_text_inert(world):
+    from qqrelease import report
+    cfg, store, mirror, repo, shas = world
+    other = next(r for r in canary.canary_repos(cfg) if r != repo)
+    lkgr_to(store, mirror, repo, shas[1])
+    bad = passed(repo, shas[1])
+    bad["stages"][3] = {"name": "deploy-probe", "ok": False, "seconds": 1,
+                        "detail": "<!-- @octocat <img src=x> #1 `x`"}
+    canary.finish(cfg, store, mirror, canary.select(cfg, store, repo), bad, "2026-10-05")
+    p = canary.run_path(store, other, "2026-10-05")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{not json")
+    text = report.build(cfg, store, "2026-10-05", [])
+    assert f"| {repo} | **held** |" in text and f"| {other} | **unreadable** |" in text
+    assert "<!--" not in text and "<img" not in text and "@octocat" not in text and "#1 " not in text
+    canary.finish(cfg, store, mirror, canary.Selection(repo, "build", shas[2], shas[1], ""), None, "2026-10-06")
+    text = report.build(cfg, store, "2026-10-06", [])
+    assert f"| {repo} | **error** |" in text and "1 pipeline error" in text
+    many = [{"number": i, "title": "t", "url": "u"} for i in range(report.OPEN_LIMIT)]
+    assert "possibly more" in report.build(cfg, store, "2026-10-06", many)
