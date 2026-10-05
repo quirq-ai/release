@@ -69,12 +69,23 @@ ref instead of refusing it as moved by someone else.
 
 `release-state` is the trust root the installer reads, and today it is only as safe as push access
 to this repo. Executor jobs refuse to run from any branch but `main`, which stops a dispatch from a
-branch by accident, but anyone who can push a branch can change that check. **TODO(suraj):** the
-real guard is a ruleset on `release-state` whose only bypass is the release executor identity.
-That needs two steps in order: (1) create the identity, (2) have the executor jobs push
-`release-state` with its token instead of the job's `GITHUB_TOKEN` (today they use the latter, which
-a ruleset cannot tell apart from any other workflow here), then apply the ruleset. Until then the
-installer should also check that `generation` never goes down.
+branch by accident, but anyone who can push a branch can change that check.
+
+The five jobs that push `release-state` (lkgr, canary `finish` and `report`, channel-rollback,
+canary-release-hold) run in the `release-executor` environment, meant to hold the App's key
+(`QQ_RELEASE_PRIVATE_KEY`) as its only secret and to be usable from `main` only, so that a workflow on
+another branch cannot mint the App's token. They check out with `persist-credentials: false`; the
+executor action then installs exactly one push credential: the App's token for this repo alone when
+`QQ_RELEASE_CLIENT_ID` is set, else the job's `GITHUB_TOKEN`, and checks from `.qq/state` that git
+has no other Authorization header, credential helper, URL rewrite or push URL for it. The token
+stays in git config for the rest of the job (as `GITHUB_TOKEN` does today), which is acceptable
+only because writer jobs run `main`'s code; the App token is revoked at job end. The job log says
+which identity pushes: `release-state pushes as <app>[bot]`, or a warning naming
+`github-actions[bot]`. **TODO(suraj):** create the App; limit `release-executor` to `main` (its
+deployment branch policy) *before* uploading the key, since the first writer run creates the
+environment with no limit; then apply the ruleset on `release-state` whose only bypass is the App.
+Until then any workflow here can still push the branch, and the installer should also check that
+`generation` never goes down.
 
 ## Channels and rollback (V0-REL-02)
 
@@ -204,8 +215,8 @@ stable and staged rollout (v2).
 
 ### Open for v1 (non-blocking findings from the v0 audits and reviews)
 
-Waiting on the release executor identity and the `release-state` ruleset (suraj, with the post-v0
-bots design):
+Waiting on the release executor identity and the `release-state` ruleset (suraj; the executor
+jobs can already push with the App's token):
 
 - The release chain is a consistency check, not authentication, and `is_held` trusts `state` alone.
 - A rebase after an admin force-push of `release-state` could replay commits the rewind removed; the
@@ -234,6 +245,17 @@ The canary:
 - A release reason keeps non-whitespace control characters.
 - Held and report issue bodies can exceed GitHub's 65,536-character limit.
 - The `earlier`/`later` cap reuses `RUN_IDS_KEPT`; give it its own constant.
+
+The release executor App:
+
+- No test yet that `qqrelease repos` at the pinned infra-config names no repo outside the App's
+  install list (release, innernet, xo-space, website).
+- The no-hooks lint reads the action's `run:` blocks only, not the `.sh` files they call.
+- `finish` reads the stages' artifacts, which product code wrote, while it holds the push credential.
+- The push credential check ignores transport settings (`http.*.proxy`, `sslVerify`,
+  `curloptResolve`, `cookieFile`, `remote.origin.proxy`).
+- Nothing checks at run time that the installed qq packages are the pinned commits; presubmit checks
+  what `pyproject.toml` resolves.
 
 ## Working here
 

@@ -24,6 +24,10 @@ from qqrelease.operations import Operation, Pointer
 
 BRANCH = "release-state"
 IDENTITY = ("-c", "user.name=qq-release", "-c", "user.email=qq-release@quirq.invalid")
+# Every git call here runs while the job holds the push credential, so no repository hook runs:
+# a hook planted earlier in the job would otherwise run with it. (Defense in depth: config-driven
+# commands such as filters are not covered; the guard is that nothing untrusted runs before.)
+NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
 
 
 class Store:
@@ -121,7 +125,7 @@ class Store:
         return {p for p in out.split("\0") if p}
 
     def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-        p = subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True)
+        p = subprocess.run(["git", *NO_HOOKS, *args], cwd=self.root, capture_output=True, text=True)
         if check and p.returncode != 0:
             raise ReleaseError(f"git {' '.join(args)} failed in {self.root}: {p.stderr.strip()}")
         return p

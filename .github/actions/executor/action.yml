@@ -1,12 +1,20 @@
 # Everything a release executor job needs before it acts: Python, infra-config at the pins.toml
 # commit (.qq/infra-config), qqrelease, and a worktree of the release-state branch (.qq/state).
-# Run actions/checkout (with credentials, so the state branch can be pushed) before this.
+# Run actions/checkout before this. A writer job (writes: "true") checks out with
+# persist-credentials: false: this action installs the one credential its release-state pushes use,
+# the release executor App's token for this repo when client-id is set, else the job's GITHUB_TOKEN.
 name: release executor setup
-description: Python, pinned infra-config, qqrelease and the release-state worktree
+description: Python, pinned infra-config, qqrelease, the release-state worktree and its push credential
 inputs:
   writes:
     description: "true when the job pushes release-state or moves refs: then it must run from main"
     default: "false"
+  client-id:
+    description: the release executor App's client id (vars.QQ_RELEASE_CLIENT_ID); empty means GITHUB_TOKEN
+    default: ""
+  private-key:
+    description: the App's private key (the release-executor environment's QQ_RELEASE_PRIVATE_KEY)
+    default: ""
 runs:
   using: composite
   steps:
@@ -21,12 +29,23 @@ runs:
           echo "::error::release executor jobs write release-state, so they run from main only (this is $GITHUB_REF)"
           exit 1
         fi
+    # Python never imports from the working directory or a script's folder in a writer job: an
+    # unowned root `tomllib.py` or `pip/` would otherwise run here and could plant code that runs
+    # later with the push credential. Set for this action's Python steps and, through GITHUB_ENV,
+    # for the rest of a writer job only: read-only jobs (canary stages) run product commands that
+    # may rely on the script's folder being importable.
+    - name: no imports from the working directory
+      if: inputs.writes == 'true'
+      shell: bash
+      run: echo "PYTHONSAFEPATH=1" >> "$GITHUB_ENV"
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
       with:
         python-version: "3.14"
     - name: read the infra-config pin
       id: pin
       shell: bash
+      env:
+        PYTHONSAFEPATH: "1"
       run: python -c "import tomllib; print('commit=' + tomllib.load(open('pins.toml', 'rb'))['infra-config']['commit'])" >> "$GITHUB_OUTPUT"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
@@ -34,14 +53,47 @@ runs:
         ref: ${{ steps.pin.outputs.commit }}
         path: .qq/infra-config
         persist-credentials: false
-    - shell: bash
-      run: python -m pip install --quiet .
+    - name: install qqrelease from pinned, hashed packages
+      shell: bash
+      env:
+        PYTHONSAFEPATH: "1"
+      run: bash "$GITHUB_ACTION_PATH/install.sh"
+    # After the install (it builds packages), so nothing before this step sees a token.
+    # No continue-on-error: with client-id set, a failed mint fails the job instead of falling back.
+    - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+      id: push-app
+      if: inputs.writes == 'true' && inputs.client-id != ''
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ github.repository_owner }}
+        repositories: release   # this repo only: the token pushes release-state, nothing else
+        permission-contents: write
+    - name: install the release-state push credential
+      id: push-credential
+      if: inputs.writes == 'true'
+      shell: bash
+      env:
+        CLIENT_ID: ${{ inputs.client-id }}
+        APP_TOKEN: ${{ steps.push-app.outputs.token }}
+        JOB_TOKEN: ${{ github.token }}
+      run: bash "$GITHUB_ACTION_PATH/push-credential.sh"
     - name: open the release-state branch
       shell: bash
       run: |
-        if git ls-remote --exit-code origin refs/heads/release-state > /dev/null; then
-          git fetch --depth 1 origin refs/heads/release-state   # the branch, never a same-named tag
-          git worktree add -B release-state .qq/state FETCH_HEAD
+        if git -c core.hooksPath=/dev/null ls-remote --exit-code origin refs/heads/release-state > /dev/null; then
+          # No repository hook runs once the push credential is installed (store.py does the same).
+          # Defense in depth only: config-driven commands (filters, fsmonitor) are not covered.
+          git -c core.hooksPath=/dev/null fetch --depth 1 origin refs/heads/release-state   # the branch, never a same-named tag
+          git -c core.hooksPath=/dev/null worktree add -B release-state .qq/state FETCH_HEAD
         else
-          git worktree add --orphan -b release-state .qq/state
+          git -c core.hooksPath=/dev/null worktree add --orphan -b release-state .qq/state
         fi
+    - name: check the release-state push credential
+      if: inputs.writes == 'true'
+      shell: bash
+      working-directory: .qq/state
+      env:
+        EXPECTED_SHA256: ${{ steps.push-credential.outputs.header-sha256 }}
+        APP_SLUG: ${{ steps.push-app.outputs.app-slug }}
+      run: bash "$GITHUB_ACTION_PATH/push-credential-check.sh"

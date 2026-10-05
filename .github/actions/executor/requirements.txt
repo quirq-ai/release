@@ -1,0 +1,20 @@
+# Everything the executor installs from PyPI, by version and hash (pip --require-hashes): the build
+# backend and the qq packages' third-party dependencies. Nothing unpinned runs before the push
+# credential is minted, so nothing unpinned can plant code that later runs with it.
+# The runner is ubuntu-24.04 x86_64 with CPython 3.14 (rpds-py is a binary wheel).
+# To update: pip download --only-binary=:all: --no-deps the new versions for that target and
+# sha256sum them; `pip check` in action.yml fails if a qq pin bump needs something not listed here.
+setuptools==84.0.0 \
+    --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670
+attrs==26.1.0 \
+    --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309
+jsonschema==4.26.0 \
+    --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce
+jsonschema-specifications==2025.9.1 \
+    --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe
+referencing==0.37.0 \
+    --hash=sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231
+rpds-py==2026.6.3 \
+    --hash=sha256:dc319e5a1de4b6913aac94bf6a2f9e847371e0a140a43dd4991db1a09bc2d504
+tomlkit==0.15.1 \
+    --hash=sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304

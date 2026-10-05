@@ -318,6 +318,27 @@ def test_a_push_race_with_the_other_writer_is_rebased(tmp_path):
     assert log.splitlines() == ["next", "conflict", "canary", "lkgr"]
 
 
+def test_no_repository_hook_runs_while_the_store_commits_rebases_or_pushes(tmp_path):
+    """A hook planted earlier in a writer job would run with the push credential."""
+    remote = tmp_path / "remote.git"
+    git("init", "-q", "--bare", "-b", "release-state", str(remote), cwd=tmp_path)
+    a, b = tmp_path / "a", tmp_path / "b"
+    for d in (a, b):
+        git("clone", "-q", str(remote), str(d), cwd=tmp_path)
+        git("checkout", "-q", "-b", "release-state", cwd=d)
+    ran = tmp_path / "ran"
+    for name in ("pre-commit", "commit-msg", "post-commit", "pre-push", "pre-rebase", "post-rewrite",
+                 "reference-transaction"):
+        hook = b / ".git" / "hooks" / name
+        hook.write_text(f"#!/bin/sh\necho {name} >> '{ran}'\n")
+        hook.chmod(0o755)
+    Store(a, push=True).save({a / "pointers" / "x" / "lkgr.json": "{}\n"}, "lkgr")
+    Store(b, push=True).save({b / "pointers" / "x" / "channels" / "canary.json": "{}\n"}, "canary")
+    log = git("--git-dir", str(remote), "log", "--format=%s", "release-state", cwd=tmp_path)
+    assert log.splitlines() == ["canary", "lkgr"]   # b committed, rebased and pushed
+    assert not ran.exists()
+
+
 def test_a_rebase_never_merges_two_writers_changes_to_one_file(tmp_path):
     """A compare-and-swap per file: lines far apart would merge cleanly, into a record nobody wrote."""
     remote = tmp_path / "remote.git"
