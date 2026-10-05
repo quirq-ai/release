@@ -121,6 +121,10 @@ def test_refuses_when_the_checkout_kept_its_credentials(layout):
 
 @pytest.mark.parametrize("extra, message", [
     (("http.https://github.com/.extraheader", "AUTHORIZATION: basic b3RoZXI="), "found 2"),
+    (("http.extraheader", "AUTHORIZATION: basic b3RoZXI="), "found 2"),
+    (("http.https://github.com/quirq-ai/release.extraheader", "AUTHORIZATION: basic b3RoZXI="), "found 2"),
+    (("url.https://x-access-token:t@github.com/.pushInsteadOf", "https://github.com/"), "insteadOf"),
+    (("remote.origin.pushurl", "https://x-access-token:t@github.com/quirq-ai/release"), "push URL"),
     (("credential.helper", "store"), "credential helper"),
     (("credential.https://github.com.helper", "store"), "credential helper"),
     (("url.https://x-access-token:t@github.com/.insteadOf", "https://github.com/"), "insteadOf"),

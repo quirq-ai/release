@@ -50,6 +50,8 @@ def test_python_never_imports_from_the_working_directory():
     python = [i for i, s in enumerate(ss) if re.search(r"\bpython3?\b", s.get("run", ""))]
     setup = index(lambda s: str(s.get("uses", "")).startswith("actions/setup-python@"))
     assert python and first < setup < min(python)
+    # Job-wide for writers only: canary stages run product commands that may import siblings.
+    assert ss[first]["if"] == "inputs.writes == 'true'"
     for i in python:
         assert ss[i].get("env", {}).get("PYTHONSAFEPATH") == "1", ss[i]
 
@@ -72,18 +74,26 @@ KEY = "${{ secrets.QQ_RELEASE_PRIVATE_KEY }}"
 
 
 def jobs():
-    for f in sorted(WORKFLOWS.glob("*.yml")):
+    for f in sorted(WORKFLOWS.glob("*.y*ml")):
         for name, job in yaml.safe_load(f.read_text())["jobs"].items():
             yield (f.name, name), job
+
+
+def is_executor(step) -> bool:
+    return str(step.get("uses", "")).rstrip("/") == "./.github/actions/executor"
+
+
+def writes(step) -> bool:
+    return str(step.get("with", {}).get("writes", "")).lower() == "true"
 
 
 def test_only_the_writer_jobs_run_in_the_release_executor_environment():
     found = {k for k, job in jobs() if "environment" in job}
     assert found == WRITERS
     # And the writers are exactly the jobs that run the executor with writes on.
-    writes = {k for k, job in jobs() for s in job.get("steps", [])
-              if s.get("uses") == "./.github/actions/executor" and s.get("with", {}).get("writes") == "true"}
-    assert writes == WRITERS
+    writers = {k for k, job in jobs() for s in job.get("steps", [])
+              if is_executor(s) and writes(s)}
+    assert writers == WRITERS
     assert all(job["environment"] == "release-executor" for k, job in jobs() if k in WRITERS)
 
 
@@ -94,7 +104,7 @@ def test_writer_jobs_install_their_own_credential_and_upload_nothing():
         ss = job["steps"]
         [checkout] = [s for s in ss if str(s.get("uses", "")).startswith("actions/checkout@")]
         assert checkout.get("with", {}).get("persist-credentials") is False, k
-        [ex] = [s for s in ss if s.get("uses") == "./.github/actions/executor"]
+        [ex] = [s for s in ss if is_executor(s)]
         assert ex["with"] == {"writes": "true", "client-id": "${{ vars.QQ_RELEASE_CLIENT_ID }}",
                               "private-key": KEY}, k
         assert ss.index(checkout) < ss.index(ex)
@@ -107,6 +117,6 @@ def test_the_key_appears_in_no_other_job():
         if k not in WRITERS:
             assert "QQ_RELEASE_PRIVATE_KEY" not in yaml.safe_dump(job), k
     # And nowhere at workflow level, where every job would see it.
-    for f in WORKFLOWS.glob("*.yml"):
+    for f in WORKFLOWS.glob("*.y*ml"):
         top = {k: v for k, v in yaml.safe_load(f.read_text()).items() if k != "jobs"}
         assert "QQ_RELEASE_PRIVATE_KEY" not in yaml.safe_dump(top), f.name

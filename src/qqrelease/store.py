@@ -25,7 +25,8 @@ from qqrelease.operations import Operation, Pointer
 BRANCH = "release-state"
 IDENTITY = ("-c", "user.name=qq-release", "-c", "user.email=qq-release@quirq.invalid")
 # Every git call here runs while the job holds the push credential, so no repository hook runs:
-# a hook planted earlier in the job would otherwise run with it.
+# a hook planted earlier in the job would otherwise run with it. (Defense in depth: config-driven
+# commands such as filters are not covered; the guard is that nothing untrusted runs before.)
 NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
 
 

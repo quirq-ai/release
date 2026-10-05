@@ -72,15 +72,20 @@ to this repo. Executor jobs refuse to run from any branch but `main`, which stop
 branch by accident, but anyone who can push a branch can change that check.
 
 The five jobs that push `release-state` (lkgr, canary `finish` and `report`, channel-rollback,
-canary-release-hold) run in the `release-executor` environment, whose only secret is the App's key
-(`QQ_RELEASE_PRIVATE_KEY`) and which only `main` may use, so a workflow on another branch cannot
-mint the App's token. They check out with `persist-credentials: false`; the executor action then
-installs exactly one push credential: the App's token for this repo alone when `QQ_RELEASE_CLIENT_ID`
-is set, else the job's `GITHUB_TOKEN`, and checks from `.qq/state` that nothing else could be sent.
-The job log says which: `release-state pushes as <app>[bot]`, or a warning naming
-`github-actions[bot]`. **TODO(suraj):** create the App and its environment secret, then apply the
-ruleset on `release-state` whose only bypass is the App; until then any workflow here can still
-push the branch, and the installer should also check that `generation` never goes down.
+canary-release-hold) run in the `release-executor` environment, meant to hold the App's key
+(`QQ_RELEASE_PRIVATE_KEY`) as its only secret and to be usable from `main` only, so that a workflow on
+another branch cannot mint the App's token. They check out with `persist-credentials: false`; the
+executor action then installs exactly one push credential: the App's token for this repo alone when
+`QQ_RELEASE_CLIENT_ID` is set, else the job's `GITHUB_TOKEN`, and checks from `.qq/state` that git
+has no other Authorization header, credential helper, URL rewrite or push URL for it. The token
+stays in git config for the rest of the job (as `GITHUB_TOKEN` does today), which is acceptable
+only because writer jobs run `main`'s code; the App token is revoked at job end. The job log says
+which identity pushes: `release-state pushes as <app>[bot]`, or a warning naming
+`github-actions[bot]`. **TODO(suraj):** create the App; limit `release-executor` to `main` (its
+deployment branch policy) *before* uploading the key, since the first writer run creates the
+environment with no limit; then apply the ruleset on `release-state` whose only bypass is the App.
+Until then any workflow here can still push the branch, and the installer should also check that
+`generation` never goes down.
 
 ## Channels and rollback (V0-REL-02)
 
