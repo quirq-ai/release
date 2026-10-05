@@ -1,0 +1,14 @@
+{
+  "commit": "",
+  "digest": "",
+  "generation": 0,
+  "history": [],
+  "mirrored": false,
+  "op": "",
+  "pending": "3acc126c6a20f6bd577e0dee91348196",
+  "ref": "channels/canary",
+  "repo": "xo-space",
+  "rolled_back": [],
+  "schema": "qq-pointer/1",
+  "updated_at": ""
+}
