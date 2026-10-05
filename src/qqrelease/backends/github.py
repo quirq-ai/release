@@ -1,10 +1,11 @@
 """GitHub backend: a pointer's ref is the branch `refs/heads/<ref>` in the target repo, moved through
 the REST API.
 
-Only the release executor identity may write `lkgr` and `channels/**/*` (gate's `qq-release-refs`
-rulesets). Its installation token comes from `QQ_RELEASE_TOKEN`. TODO(suraj): the executor's
-identity (a GitHub App) does not exist yet; until it does, every write is skipped and says so, and
-the pointer still moves in the state store, which is the record readers use.
+Only the release executor identity (a GitHub App) may write `lkgr` and `channels/**/*` (gate's
+`qq-release-refs` rulesets). Its installation token for the onboarded repos comes from
+`QQ_RELEASE_TOKEN`; the same App pushes `release-state` with a separate token for this repo alone,
+installed by the executor action. TODO(suraj): until the App exists, every ref write here is skipped
+and says so, and the pointer still moves in the state store, which is the record readers use.
 
 The write compares before it swaps: if the ref is not at an expected value (and not already at
 `new`), it refuses. The REST API has no compare-and-swap of its own, so the read and the forced

@@ -9,3 +9,7 @@
 /pyproject.toml  @sharmasuraj0123
 # the qqrelease code the executor and lkgr run with write and App tokens
 /src/            @sharmasuraj0123
+# setuptools runs these at the executor's `pip install .`, before its push credential exists, so
+# unowned they could plant code that runs later with it (pyproject.toml is owned above)
+/setup.py        @sharmasuraj0123
+/setup.cfg       @sharmasuraj0123

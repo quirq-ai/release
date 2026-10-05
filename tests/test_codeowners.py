@@ -13,6 +13,9 @@ def test_codeowners_names_suraj_for_exactly_the_trust_paths():
     # Exactly these paths: no catch-all and no later line that could leave one unowned (the last
     # match wins).
     owned = {"/.github/", "/pins.toml", "/pyproject.toml", "/src/"}
-    assert rules == {path: ["@sharmasuraj0123"] for path in owned}
+    # Files setuptools would run at the executor's `pip install .` if anyone added them: owned
+    # before they exist, so adding one needs suraj's review.
+    guarded = {"/setup.py", "/setup.cfg"}
+    assert rules == {path: ["@sharmasuraj0123"] for path in owned | guarded}
     # A renamed path would leave its rule matching nothing.
     assert all((ROOT / path.strip("/")).exists() for path in owned)
