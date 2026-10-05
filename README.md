@@ -246,6 +246,17 @@ The canary:
 - Held and report issue bodies can exceed GitHub's 65,536-character limit.
 - The `earlier`/`later` cap reuses `RUN_IDS_KEPT`; give it its own constant.
 
+The release executor App:
+
+- No test yet that `qqrelease repos` at the pinned infra-config names no repo outside the App's
+  install list (release, innernet, xo-space, website).
+- The no-hooks lint reads the action's `run:` blocks only, not the `.sh` files they call.
+- `finish` reads the stages' artifacts, which product code wrote, while it holds the push credential.
+- The push credential check ignores transport settings (`http.*.proxy`, `sslVerify`,
+  `curloptResolve`, `cookieFile`, `remote.origin.proxy`).
+- Nothing checks at run time that the installed qq packages are the pinned commits; presubmit checks
+  what `pyproject.toml` resolves.
+
 ## Working here
 
 See [AGENTS.md](AGENTS.md). Run the checks as CI does: clone infra-config at the `pins.toml` commit into

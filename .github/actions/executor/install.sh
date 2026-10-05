@@ -5,5 +5,7 @@
 set -euo pipefail
 here=$(dirname "$0")
 python -m pip install --quiet --disable-pip-version-check --require-hashes --only-binary=:all: --no-deps -r "$here/requirements.txt"
+# pip builds `.` in the tree, and setuptools ships whatever build/lib already holds: start empty.
+rm -rf build
 python -m pip install --quiet --disable-pip-version-check --no-deps --no-build-isolation -r "$here/requirements-qq.txt" .
 python -m pip check

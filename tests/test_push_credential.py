@@ -60,7 +60,8 @@ def install(repo: Path, temp: Path, **env):
 
 
 def check(state: Path, expected: str, slug: str = ""):
-    env = {**os.environ, "EXPECTED_SHA256": expected, "APP_SLUG": slug}
+    env = {**os.environ, "EXPECTED_SHA256": expected, "APP_SLUG": slug,
+           "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "quirq-ai/release"}
     return subprocess.run(["bash", str(ACTION / "push-credential-check.sh")], cwd=state, env=env,
                           capture_output=True, text=True)
 
@@ -128,19 +129,46 @@ def test_refuses_when_the_checkout_kept_its_credentials(layout):
     (("url.https://x-access-token:t@github.com/.pushInsteadOf", "https://github.com/"), "insteadOf"),
     (("remote.origin.pushurl", "https://x-access-token:t@github.com/quirq-ai/release"), "push URL"),
     (("url.https://x-access-token:t@github.com/quirq-ai/.insteadOf", "https://github.com/quirq-ai/"), "insteadOf"),
-    (("remote.origin.url", "https://x-access-token:t@github.com/quirq-ai/release"), "credentials"),
     (("credential.helper", "store"), "credential helper"),
     (("credential.https://github.com.helper", "store"), "credential helper"),
     (("url.https://x-access-token:t@github.com/.insteadOf", "https://github.com/"), "insteadOf"),
+    (("remote.origin.pushurl", ORIGIN, "remote.origin.pushurl", "file:///sink.git"), "push URL"),
+    (("url.https://github.com/quirq-ai/release.pushInsteadOf", ORIGIN,
+      "url.file:///evil.git.insteadOf", ORIGIN), "fetch URL"),
+    (("remote.origin.url", "file:///evil.git", "remote.origin.pushurl", ORIGIN), "more than one URL"),
+    (("remote.origin.vcs", "qqx"), "remote helper"),
 ])
 def test_check_refuses_anything_that_could_send_another_credential(layout, extra, message):
     repo, temp, git = layout
     p, out = install(repo, temp, JOB_TOKEN="job-token")
     assert p.returncode == 0, p.stderr
-    git("config", "--local", "--add", *extra)
+    for i in range(0, len(extra), 2):
+        git("config", "--local", "--add", *extra[i:i + 2])
     c = check(repo / ".qq/state", out["header-sha256"])
     assert c.returncode != 0
     assert message in c.stdout
+
+
+@pytest.mark.parametrize("url, message", [
+    ("https://x-access-token:t@github.com/quirq-ai/release", "credentials"),
+    ("https://github.com/attacker/release", "origin is not https://github.com/quirq-ai/release"),
+])
+def test_check_refuses_an_origin_other_than_this_repository(layout, url, message):
+    repo, temp, git = layout
+    p, out = install(repo, temp, JOB_TOKEN="job-token")
+    assert p.returncode == 0, p.stderr
+    git("remote", "set-url", "origin", url)
+    c = check(repo / ".qq/state", out["header-sha256"])
+    assert c.returncode != 0
+    assert message in c.stdout
+
+
+def test_check_accepts_origin_with_git_suffix(layout):
+    repo, temp, git = layout
+    p, out = install(repo, temp, JOB_TOKEN="job-token")
+    git("remote", "set-url", "origin", ORIGIN + ".git")
+    c = check(repo / ".qq/state", out["header-sha256"])
+    assert c.returncode == 0, c.stdout + c.stderr
 
 
 def test_check_allows_rewrites_of_other_urls(layout):

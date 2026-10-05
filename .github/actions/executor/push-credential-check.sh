@@ -10,15 +10,21 @@ n=$(git config --get-regexp '^http\..*extraheader$' | grep -c . || true)
 got=$(printf '%s' "$(git config --get "$key")" | sha256sum | cut -d' ' -f1)
 [ "$got" = "${EXPECTED_SHA256:?}" ] || fail "the header is not the one this job installed"
 if git config --get-regexp '^credential\..*helper$' > /dev/null; then fail "a credential helper is configured"; fi
-# The push goes to origin's URL exactly as checkout set it: no url.*.insteadOf, pushInsteadOf or
-# remote push URL may rewrite it (rewrites of other URLs, like a proxy's ssh-to-https, are fine).
-url=$(git config --get remote.origin.url) || fail "no origin remote"
+# Fetches and pushes go to this repository's URL exactly as checkout set it, and only there: no
+# second URL, url.*.insteadOf, pushInsteadOf, remote push URL or remote helper may redirect either
+# (rewrites of other URLs, like a proxy's ssh-to-https, are fine). Transport settings (http proxy,
+# sslVerify, curloptResolve, cookieFile) are out of scope here: see the README's v1 list.
+expected="${GITHUB_SERVER_URL:?}/${GITHUB_REPOSITORY:?}"
+url=$(git config --get-all remote.origin.url) || fail "no origin remote"
+[ "$(printf '%s\n' "$url" | wc -l)" = 1 ] || fail "origin has more than one URL"
 case "$url" in
   *@*) fail "origin's URL carries credentials" ;;
-  https://github.com/*) ;;
-  *) fail "origin is not an https://github.com/ URL" ;;
+  "$expected" | "$expected.git") ;;
+  *) fail "origin is not $expected" ;;
 esac
-[ "$(git remote get-url --push origin)" = "$url" ] || fail "a url.*.insteadOf or remote push URL rewrites the push URL"
+[ "$(git remote get-url --all origin)" = "$url" ] || fail "a url.*.insteadOf rewrites origin's fetch URL"
+[ "$(git remote get-url --push --all origin)" = "$url" ] || fail "a url.*.insteadOf, pushInsteadOf or remote push URL rewrites the push URL"
+if git config --get-regexp '^remote\.origin\.vcs$' > /dev/null; then fail "origin goes through a remote helper (remote.origin.vcs)"; fi
 if [ -n "${APP_SLUG:-}" ]; then
   echo "release-state pushes as ${APP_SLUG}[bot]"
 else

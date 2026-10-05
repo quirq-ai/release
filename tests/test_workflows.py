@@ -70,12 +70,37 @@ def test_the_install_takes_pypi_packages_by_hash_and_qq_packages_by_commit():
     script = (ACTION.parent / "install.sh").read_text()
     assert "--require-hashes --only-binary=:all: --no-deps -r \"$here/requirements.txt\"" in script
     assert "--no-deps --no-build-isolation -r \"$here/requirements-qq.txt\" ." in script
-    assert script.count("pip install") == 2 and "pip check" in script
     lines = [l for l in (ACTION.parent / "requirements.txt").read_text().splitlines()
              if l.strip() and not l.lstrip().startswith(("#", "--hash"))]
-    assert all(re.match(r"^[A-Za-z0-9._-]+==[^ ;]+( ;[^\\]+)? \\$", l) for l in lines), lines
+    assert all(re.match(r"^[A-Za-z0-9._-]+==[^ ;]+ \\$", l) for l in lines), lines
     text = (ACTION.parent / "requirements.txt").read_text()
     assert text.count("--hash=sha256:") == len(lines)
+
+
+INSTALLER = re.compile(r"\b(pip3?|uv|easy_install|ensurepip)\b")
+
+
+def test_the_action_installs_only_through_install_sh_and_writers_install_nothing():
+    runs = [s.get("run", "") for s in steps()]
+    assert sum(r.strip() == 'bash "$GITHUB_ACTION_PATH/install.sh"' for r in runs) == 1
+    assert not [r for r in runs if INSTALLER.search(r)]
+    for k, job in jobs():
+        if k in WRITERS:
+            assert not [s for s in job["steps"] if INSTALLER.search(s.get("run", ""))], k
+    code = "\n".join(l.split("#")[0] for l in (ACTION.parent / "install.sh").read_text().splitlines())
+    assert len(re.findall(r"\bpip3?\s+install\b", code)) == 2
+    assert re.search(r"^set -euo pipefail$", code, re.M) and re.search(r"^python -m pip check$", code, re.M)
+
+
+def test_no_build_output_is_committed_or_installed():
+    """B1: setuptools ships whatever build/lib holds, so a committed file there would run with the
+    credential, and a stale copy could win over src/."""
+    import subprocess
+    assert subprocess.run(["git", "ls-files", "build"], cwd=ROOT, capture_output=True, text=True,
+                          check=True).stdout == ""
+    code = [l.split("#")[0].strip() for l in (ACTION.parent / "install.sh").read_text().splitlines()]
+    second = next(i for i, l in enumerate(code) if "requirements-qq.txt" in l)
+    assert "rm -rf build" in code[:second]
 
 
 def test_the_qq_commits_installed_by_the_executor_are_the_ones_pyproject_resolves():
