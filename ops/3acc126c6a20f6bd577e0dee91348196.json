@@ -1,18 +1,18 @@
 {
   "actor": "https://github.com/quirq-ai/release/actions/runs/37274774607",
-  "applied_at": "",
+  "applied_at": "2026-10-05T06:59:21Z",
   "digest": "sha256:d995274b78773b0154962485e64dfac5eb0641dd8336c235bc54c2fa241613ef",
   "error": "",
   "from_commit": "",
   "generation": 0,
   "key": "3acc126c6a20f6bd577e0dee91348196",
   "kind": "promote",
-  "mirror": "",
+  "mirror": "skipped: no release executor identity (QQ_RELEASE_TOKEN unset; TODO(suraj))",
   "reason": "daily canary 2026-10-05",
   "recorded_at": "2026-10-05T06:59:21Z",
   "ref": "channels/canary",
   "repo": "xo-space",
   "schema": "qq-operation/1",
-  "state": "recorded",
+  "state": "applied",
   "to_commit": "14b21a41668bc8124b4cf5cf9cd59fb44dc7d419"
 }
