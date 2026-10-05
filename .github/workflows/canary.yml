@@ -113,6 +113,7 @@ jobs:
     needs: [plan, stages]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
+    environment: release-executor   # the App's key is this environment's secret; main only
     timeout-minutes: 10
     concurrency:
       group: release-channels   # every writer of channel pointers (canary, channel-rollback)
@@ -123,9 +124,13 @@ jobs:
       held: ${{ steps.finish.outputs.held }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false   # the executor installs the one push credential
       - uses: ./.github/actions/executor
         with:
           writes: "true"
+          client-id: ${{ vars.QQ_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.QQ_RELEASE_PRIVATE_KEY }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           pattern: canary-*
@@ -224,6 +229,7 @@ jobs:
     # Also after a red finish (a repo's pipeline error): those are the days the report matters most.
     if: always() && needs.plan.result == 'success' && needs.finish.result != 'skipped' && needs.finish.result != 'cancelled'
     runs-on: ubuntu-24.04
+    environment: release-executor   # the App's key is this environment's secret; main only
     timeout-minutes: 10
     concurrency:
       group: release-channels
@@ -233,9 +239,13 @@ jobs:
       issues: write             # the day's report issue
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false   # the executor installs the one push credential
       - uses: ./.github/actions/executor
         with:
           writes: "true"
+          client-id: ${{ vars.QQ_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.QQ_RELEASE_PRIVATE_KEY }}
       - name: write the daily canary report
         env:
           GH_TOKEN: ${{ github.token }}

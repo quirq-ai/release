@@ -1,7 +1,8 @@
 # S4: release a held canary commit when the hold was the machine's fault, not the commit's (a
 # runner fault that still looked like a failing action). `qqrelease canary release-hold` records a
 # keyed operation and marks canary/<repo>/held/<commit>.json released on release-state, in one
-# commit; the next canary run builds that commit again. No ref moves, so no executor App token.
+# commit; the next canary run builds that commit again. No ref moves: only the release-state push,
+# with the executor App's token for this repo when QQ_RELEASE_CLIENT_ID is set (else GITHUB_TOKEN).
 # The dispatch names the hold: `released_before` is the number of entries in the hold record's
 # `releases` (0 for a commit's first hold). A retried dispatch is a no-op; re-running a finished run
 # after the commit was held again is refused, so each hold needs its own release.
@@ -44,14 +45,19 @@ concurrency:
 jobs:
   release-hold:
     runs-on: ubuntu-24.04
+    environment: release-executor   # the App's key is this environment's secret; main only
     timeout-minutes: 10
     permissions:
       contents: write           # push this repo's release-state branch only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false   # the executor installs the one push credential
       - uses: ./.github/actions/executor
         with:
           writes: "true"
+          client-id: ${{ vars.QQ_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.QQ_RELEASE_PRIVATE_KEY }}
       - name: release the hold
         env:
           REPO: ${{ inputs.repo }}

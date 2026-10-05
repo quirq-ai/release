@@ -22,6 +22,7 @@ concurrency:
 jobs:
   lkgr:
     runs-on: ubuntu-24.04
+    environment: release-executor   # the App's key is this environment's secret; main only
     timeout-minutes: 10
     permissions:
       contents: write           # push this repo's release-state branch only
@@ -29,9 +30,13 @@ jobs:
       # raises the API rate limit for those reads.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false   # the executor installs the one push credential
       - uses: ./.github/actions/executor
         with:
           writes: "true"
+          client-id: ${{ vars.QQ_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.QQ_RELEASE_PRIVATE_KEY }}
       - name: list the onboarded repos for the executor token
         id: repos
         run: |

@@ -61,3 +61,52 @@ def test_no_repository_hook_runs_once_the_credential_is_installed():
         for line in s.get("run", "").splitlines():
             for call in re.findall(r"\bgit\b[^|;&]*", line.split("#")[0]):
                 assert call.startswith("git -c core.hooksPath=/dev/null "), line
+
+
+WORKFLOWS = ROOT / ".github" / "workflows"
+# The jobs that push release-state: they alone may hold the App's key (the release-executor
+# environment, which only main can use).
+WRITERS = {("lkgr.yml", "lkgr"), ("canary.yml", "finish"), ("canary.yml", "report"),
+           ("channel-rollback.yml", "rollback"), ("canary-release-hold.yml", "release-hold")}
+KEY = "${{ secrets.QQ_RELEASE_PRIVATE_KEY }}"
+
+
+def jobs():
+    for f in sorted(WORKFLOWS.glob("*.yml")):
+        for name, job in yaml.safe_load(f.read_text())["jobs"].items():
+            yield (f.name, name), job
+
+
+def test_only_the_writer_jobs_run_in_the_release_executor_environment():
+    found = {k for k, job in jobs() if "environment" in job}
+    assert found == WRITERS
+    # And the writers are exactly the jobs that run the executor with writes on.
+    writes = {k for k, job in jobs() for s in job.get("steps", [])
+              if s.get("uses") == "./.github/actions/executor" and s.get("with", {}).get("writes") == "true"}
+    assert writes == WRITERS
+    assert all(job["environment"] == "release-executor" for k, job in jobs() if k in WRITERS)
+
+
+def test_writer_jobs_install_their_own_credential_and_upload_nothing():
+    for k, job in jobs():
+        if k not in WRITERS:
+            continue
+        ss = job["steps"]
+        [checkout] = [s for s in ss if str(s.get("uses", "")).startswith("actions/checkout@")]
+        assert checkout.get("with", {}).get("persist-credentials") is False, k
+        [ex] = [s for s in ss if s.get("uses") == "./.github/actions/executor"]
+        assert ex["with"] == {"writes": "true", "client-id": "${{ vars.QQ_RELEASE_CLIENT_ID }}",
+                              "private-key": KEY}, k
+        assert ss.index(checkout) < ss.index(ex)
+        assert not [s for s in ss if str(s.get("uses", "")).startswith("actions/upload-artifact@")], k
+
+
+def test_the_key_appears_in_no_other_job():
+    """Not plan, not stages (which runs product code), not held, the watchdog or presubmit."""
+    for k, job in jobs():
+        if k not in WRITERS:
+            assert "QQ_RELEASE_PRIVATE_KEY" not in yaml.safe_dump(job), k
+    # And nowhere at workflow level, where every job would see it.
+    for f in WORKFLOWS.glob("*.yml"):
+        top = {k: v for k, v in yaml.safe_load(f.read_text()).items() if k != "jobs"}
+        assert "QQ_RELEASE_PRIVATE_KEY" not in yaml.safe_dump(top), f.name
