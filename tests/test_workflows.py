@@ -27,7 +27,7 @@ def test_no_step_continues_on_error():
 def test_the_push_token_is_minted_for_this_repo_only_after_the_install():
     ss = steps()
     mint = index(lambda s: str(s.get("uses", "")).startswith(MINT))
-    install = index(lambda s: "pip install" in s.get("run", ""))
+    install = index(lambda s: "install.sh" in s.get("run", ""))
     guard = index(lambda s: s.get("name") == "writers run from main only")
     cred = index(lambda s: s.get("id") == "push-credential")
     assert guard < install < mint < cred
@@ -47,7 +47,7 @@ def test_python_never_imports_from_the_working_directory():
     code that runs later with the push credential."""
     ss = steps()
     first = index(lambda s: "PYTHONSAFEPATH=1" in s.get("run", "") and "GITHUB_ENV" in s["run"])
-    python = [i for i, s in enumerate(ss) if re.search(r"\bpython3?\b", s.get("run", ""))]
+    python = [i for i, s in enumerate(ss) if re.search(r"\bpython3?\b|install\.sh", s.get("run", ""))]
     setup = index(lambda s: str(s.get("uses", "")).startswith("actions/setup-python@"))
     assert python and first < setup < min(python)
     # Job-wide for writers only: canary stages run product commands that may import siblings.
@@ -63,6 +63,34 @@ def test_no_repository_hook_runs_once_the_credential_is_installed():
         for line in s.get("run", "").splitlines():
             for call in re.findall(r"\bgit\b[^|;&]*", line.split("#")[0]):
                 assert call.startswith("git -c core.hooksPath=/dev/null "), line
+
+
+def test_the_install_takes_pypi_packages_by_hash_and_qq_packages_by_commit():
+    """F2: nothing unpinned from PyPI runs before the token is minted."""
+    script = (ACTION.parent / "install.sh").read_text()
+    assert "--require-hashes --only-binary=:all: --no-deps -r \"$here/requirements.txt\"" in script
+    assert "--no-deps --no-build-isolation -r \"$here/requirements-qq.txt\" ." in script
+    assert script.count("pip install") == 2 and "pip check" in script
+    lines = [l for l in (ACTION.parent / "requirements.txt").read_text().splitlines()
+             if l.strip() and not l.lstrip().startswith(("#", "--hash"))]
+    assert all(re.match(r"^[A-Za-z0-9._-]+==[^ ;]+( ;[^\\]+)? \\$", l) for l in lines), lines
+    text = (ACTION.parent / "requirements.txt").read_text()
+    assert text.count("--hash=sha256:") == len(lines)
+
+
+def test_the_qq_commits_installed_by_the_executor_are_the_ones_pyproject_resolves():
+    """Checked against what pip installed from pyproject.toml here (qqsync through qqrecipes)."""
+    import json
+    from importlib import metadata
+    pins = {}
+    for line in (ACTION.parent / "requirements-qq.txt").read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            name, url = [x.strip() for x in line.split(" @ ")]
+            pins[name] = url.rsplit("@", 1)[1]
+    assert set(pins) == {"qqsync", "qqgarden", "qqrecipes"}
+    for name, commit in pins.items():
+        info = json.loads(metadata.distribution(name).read_text("direct_url.json"))
+        assert info["vcs_info"]["commit_id"] == commit, name
 
 
 WORKFLOWS = ROOT / ".github" / "workflows"

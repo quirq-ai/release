@@ -13,6 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 ACTION = ROOT / ".github" / "actions" / "executor"
 KEY = "http.https://github.com/.extraheader"
+ORIGIN = "https://github.com/quirq-ai/release"
 
 
 def header(token: str) -> str:
@@ -34,6 +35,7 @@ def layout(tmp_path, monkeypatch):
 
     git("init", "-q", "-b", "main")
     git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "root")
+    git("remote", "add", "origin", ORIGIN)
     git("worktree", "add", "-q", "--orphan", "-b", "release-state", ".qq/state")
     return repo, temp, git
 
@@ -85,7 +87,7 @@ def test_app_token_is_the_one_header_seen_from_the_worktree(layout):
     [f] = temp.glob("qq-push-credential-*")
     assert f.stat().st_mode & 0o777 == 0o600
     assert git("config", "--local", "--get-all", "include.path").split() == [str(f)]
-    assert git("remote", "-v") == ""
+    assert git("remote", "get-url", "--push", "origin").strip() == ORIGIN   # no credentials in the URL
     c = check(state, out["header-sha256"], "quirq-release-executor")
     assert c.returncode == 0, c.stdout + c.stderr
     assert c.stdout.strip() == "release-state pushes as quirq-release-executor[bot]"
@@ -125,6 +127,8 @@ def test_refuses_when_the_checkout_kept_its_credentials(layout):
     (("http.https://github.com/quirq-ai/release.extraheader", "AUTHORIZATION: basic b3RoZXI="), "found 2"),
     (("url.https://x-access-token:t@github.com/.pushInsteadOf", "https://github.com/"), "insteadOf"),
     (("remote.origin.pushurl", "https://x-access-token:t@github.com/quirq-ai/release"), "push URL"),
+    (("url.https://x-access-token:t@github.com/quirq-ai/.insteadOf", "https://github.com/quirq-ai/"), "insteadOf"),
+    (("remote.origin.url", "https://x-access-token:t@github.com/quirq-ai/release"), "credentials"),
     (("credential.helper", "store"), "credential helper"),
     (("credential.https://github.com.helper", "store"), "credential helper"),
     (("url.https://x-access-token:t@github.com/.insteadOf", "https://github.com/"), "insteadOf"),
@@ -137,6 +141,18 @@ def test_check_refuses_anything_that_could_send_another_credential(layout, extra
     c = check(repo / ".qq/state", out["header-sha256"])
     assert c.returncode != 0
     assert message in c.stdout
+
+
+def test_check_allows_rewrites_of_other_urls(layout):
+    """A proxy's ssh-to-https rewrite (url.https://github.com/.insteadOf = git@github.com:) leaves the
+    push URL alone."""
+    repo, temp, git = layout
+    p, out = install(repo, temp, JOB_TOKEN="job-token")
+    assert p.returncode == 0, p.stderr
+    git("config", "--local", "--add", "url.https://github.com/.insteadOf", "git@github.com:")
+    git("config", "--local", "--add", "url.https://github.com/.insteadOf", "ssh://git@github.com/")
+    c = check(repo / ".qq/state", out["header-sha256"])
+    assert c.returncode == 0, c.stdout + c.stderr
 
 
 def test_check_refuses_a_header_it_did_not_install(layout):

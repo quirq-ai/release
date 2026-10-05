@@ -1,0 +1,6 @@
+# The qq packages the executor installs, by full commit, built with --no-deps --no-build-isolation
+# against requirements.txt. Each must equal the pin pip resolves from pyproject.toml (qqsync through
+# qqrecipes); tests/test_workflows.py checks that against the installed packages.
+qqsync @ git+https://github.com/quirq-ai/sync@8f624f4a7fe3abdab2c7b83376f1ae7772073fd4
+qqgarden @ git+https://github.com/quirq-ai/gardener@bad853c0464e0e56ae894ff3795cbb3e5e24ba48
+qqrecipes @ git+https://github.com/quirq-ai/recipes@ab25f8c5b172c1357337e8afdf97d67338d43f46
