@@ -173,3 +173,22 @@ def test_the_key_appears_in_no_other_job():
     for f in WORKFLOWS.glob("*.y*ml"):
         top = {k: v for k, v in yaml.safe_load(f.read_text()).items() if k != "jobs"}
         assert "QQ_RELEASE_PRIVATE_KEY" not in yaml.safe_dump(top), f.name
+
+
+def test_finish_finds_the_plan_and_stage_results_however_many_artifacts_there_are():
+    """download-artifact puts a lone pattern match straight into `path` (2026-10-06: a day with no
+    builds left only the plan, and finish could not find it), so the plan is downloaded by name and
+    each stage artifact carries its repo's directory."""
+    wf = yaml.safe_load((WORKFLOWS / "canary.yml").read_text())["jobs"]
+    [up] = [s for s in wf["stages"]["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+    assert up["with"]["path"] == ".qq/stages-out"
+    copy = next(s for s in wf["stages"]["steps"] if ".qq/stages-out/$REPO/stages.json" in s.get("run", ""))
+    # Cleared first, so the artifact holds this repo's directory alone.
+    assert copy["run"].index("rm -rf .qq/stages-out") < copy["run"].index("mkdir")
+    assert wf["stages"]["steps"].index(copy) < wf["stages"]["steps"].index(up)
+    downloads = [s["with"] for s in wf["finish"]["steps"]
+                 if str(s.get("uses", "")).startswith("actions/download-artifact@")]
+    assert downloads == [{"name": "canary-plan", "path": ".qq/dl/canary-plan"},
+                         {"pattern": "canary-stages-*", "path": ".qq/stages", "merge-multiple": True}]
+    run = next(s["run"] for s in wf["finish"]["steps"] if s.get("id") == "finish")
+    assert "--plan .qq/dl/canary-plan/plan.json --stages-dir .qq/stages" in run
