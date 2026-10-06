@@ -109,6 +109,8 @@ jobs:
         env:
           REPO: ${{ matrix.repo }}
         run: |
+          # Only this repo's file: anything else the stages left here would merge over other repos'.
+          rm -rf .qq/stages-out
           f=".qq/canary/$REPO/stages.json"
           [ -f "$f" ] || exit 0
           mkdir -p ".qq/stages-out/$REPO"
@@ -118,6 +120,7 @@ jobs:
         with:
           name: canary-stages-${{ matrix.repo }}
           path: .qq/stages-out
+          include-hidden-files: true   # a repo name may start with a dot
           if-no-files-found: warn   # finish records a missing file as a held canary
 
   finish:

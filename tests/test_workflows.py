@@ -183,6 +183,8 @@ def test_finish_finds_the_plan_and_stage_results_however_many_artifacts_there_ar
     [up] = [s for s in wf["stages"]["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
     assert up["with"]["path"] == ".qq/stages-out"
     copy = next(s for s in wf["stages"]["steps"] if ".qq/stages-out/$REPO/stages.json" in s.get("run", ""))
+    # Cleared first, so the artifact holds this repo's directory alone.
+    assert copy["run"].index("rm -rf .qq/stages-out") < copy["run"].index("mkdir")
     assert wf["stages"]["steps"].index(copy) < wf["stages"]["steps"].index(up)
     downloads = [s["with"] for s in wf["finish"]["steps"]
                  if str(s.get("uses", "")).startswith("actions/download-artifact@")]

@@ -261,6 +261,9 @@ The release executor App:
   blank line; count with `wc -l` outside it). Inert today.
 - No test for an unset or empty `GITHUB_SERVER_URL`/`GITHUB_REPOSITORY` (the check fails closed).
 - `.gitignore` has `build/`; it should be `/build/`.
+- A stage job's leftover process could still write another repo's directory into its stage
+  artifact between the copy and the upload; `finish` merges every artifact, so it would overwrite
+  that repo's result. Take each repo's file only from the artifact named after it.
 
 ## Working here
 
