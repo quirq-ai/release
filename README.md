@@ -256,6 +256,11 @@ The release executor App:
   `curloptResolve`, `cookieFile`, `remote.origin.proxy`).
 - Nothing checks at run time that the installed qq packages are the pinned commits; presubmit checks
   what `pyproject.toml` resolves.
+- The build lint checks that install.sh's `rm -rf build` line exists, not that it runs.
+- An extra empty origin `url` or `pushurl` value slips the one-URL count (`$(...)` drops the trailing
+  blank line; count with `wc -l` outside it). Inert today.
+- No test for an unset or empty `GITHUB_SERVER_URL`/`GITHUB_REPOSITORY` (the check fails closed).
+- `.gitignore` has `build/`; it should be `/build/`.
 
 ## Working here
 

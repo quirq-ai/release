@@ -102,11 +102,22 @@ jobs:
           junit: .qq/canary/**/junit/*.xml
           kind: canary
           name: ${{ matrix.repo }}
+      # The artifact holds <repo>/stages.json, so finish finds each repo's file at the same path
+      # however many artifacts it downloads.
+      - name: keep the stage results under the repo's name
+        if: always()
+        env:
+          REPO: ${{ matrix.repo }}
+        run: |
+          f=".qq/canary/$REPO/stages.json"
+          [ -f "$f" ] || exit 0
+          mkdir -p ".qq/stages-out/$REPO"
+          cp "$f" ".qq/stages-out/$REPO/stages.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: always()
         with:
           name: canary-stages-${{ matrix.repo }}
-          path: .qq/canary/${{ matrix.repo }}/stages.json
+          path: .qq/stages-out
           if-no-files-found: warn   # finish records a missing file as a held canary
 
   finish:
@@ -131,17 +142,19 @@ jobs:
           writes: "true"
           client-id: ${{ vars.QQ_RELEASE_CLIENT_ID }}
           private-key: ${{ secrets.QQ_RELEASE_PRIVATE_KEY }}
+      # download-artifact puts a lone match of a pattern straight into `path`, and several into
+      # path/<name>/: name the plan, and merge the stage results, which carry their repo's directory.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          pattern: canary-*
-          path: .qq/dl
-      - name: collect stage results
-        run: |
-          mkdir -p .qq/stages
-          for d in .qq/dl/canary-stages-*; do
-            [ -d "$d" ] && mv "$d" ".qq/stages/${d#.qq/dl/canary-stages-}"
-          done
-          true
+          name: canary-plan
+          path: .qq/dl/canary-plan
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: canary-stages-*
+          path: .qq/stages
+          merge-multiple: true
+      - name: an empty stage results directory when nothing was built
+        run: mkdir -p .qq/stages
       - name: list the onboarded repos for the executor token
         id: repos
         run: |
