@@ -83,11 +83,12 @@ has no other Authorization header, credential helper, URL rewrite or push URL fo
 stays in git config for the rest of the job (as `GITHUB_TOKEN` does today), which is acceptable
 only because writer jobs run `main`'s code; the App token is revoked at job end. The job log says
 which identity pushes: `release-state pushes as <app>[bot]`, or a warning naming
-`github-actions[bot]`. **TODO(suraj):** the App exists; what remains is "command 2", which sets
-`QQ_RELEASE_CLIENT_ID` here so these jobs act as the App, and then the ruleset on `release-state`
-whose only bypass is the App (open gate PR #27). `release-executor` must allow only `main` (its
-deployment branch policy) *before* the key is uploaded, since the first writer run creates the
-environment with no limit.
+`github-actions[bot]`. **TODO(suraj):** the App exists; what remains is the gate settings run that
+gives the `qq-release-refs` rulesets the App's bypass (gate #26 and #28, merged but not applied),
+then "command 2", which sets `QQ_RELEASE_CLIENT_ID` here so these jobs act as the App (it stops
+until those rulesets carry the bypass), and then the ruleset on `release-state` whose only bypass
+is the App (open gate PR #27). `release-executor` must allow only `main` (its deployment branch
+policy).
 Until then any workflow here can still push the branch, and the installer should also check that
 `generation` never goes down.
 
