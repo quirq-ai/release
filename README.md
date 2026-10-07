@@ -83,9 +83,11 @@ has no other Authorization header, credential helper, URL rewrite or push URL fo
 stays in git config for the rest of the job (as `GITHUB_TOKEN` does today), which is acceptable
 only because writer jobs run `main`'s code; the App token is revoked at job end. The job log says
 which identity pushes: `release-state pushes as <app>[bot]`, or a warning naming
-`github-actions[bot]`. **TODO(suraj):** create the App; limit `release-executor` to `main` (its
-deployment branch policy) *before* uploading the key, since the first writer run creates the
-environment with no limit; then apply the ruleset on `release-state` whose only bypass is the App.
+`github-actions[bot]`. **TODO(suraj):** the App exists; what remains is "command 2", which sets
+`QQ_RELEASE_CLIENT_ID` here so these jobs act as the App, and then the ruleset on `release-state`
+whose only bypass is the App (open gate PR #27). `release-executor` must allow only `main` (its
+deployment branch policy) *before* the key is uploaded, since the first writer run creates the
+environment with no limit.
 Until then any workflow here can still push the branch, and the installer should also check that
 `generation` never goes down.
 
@@ -222,8 +224,9 @@ stable and staged rollout (v2).
 
 ### Open for v1 (non-blocking findings from the v0 audits and reviews)
 
-Waiting on the release executor identity and the `release-state` ruleset (suraj; the executor
-jobs can already push with the App's token):
+Waiting on the release executor identity and the `release-state` ruleset (suraj). The App
+`quirq-release-executor` exists, but until "command 2" runs, the executor jobs push with
+`GITHUB_TOKEN` and release-state records `skipped: no release executor identity`:
 
 - The release chain is a consistency check, not authentication, and `is_held` trusts `state` alone.
 - A rebase after an admin force-push of `release-state` could replay commits the rewind removed; the
