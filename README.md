@@ -7,6 +7,7 @@ digest, and only the release executor moves it, recording an operation key befor
 - `lkgr` (last known good): the newest `main` commit whose required post-submit builders are all
   green. Channels are cut from it.
 - `canary`: built and shipped daily by agents alone, to quirq's research and test environments only.
+  In v0 the canary starts on a CI runner; canary test machines are not set up yet.
 - `dev` (declared, off in v0) and `stable` (suraj promotes; low priority, v2).
 
 **Chromium counterpart:** V8's lkgr finder and release scripts, and LUCI's `promote.py`.
@@ -61,10 +62,11 @@ commit turned red and no listed commit is green; it stays put and the workflow f
 
 On GitHub the ref is the branch `<ref>` in the target repo (`lkgr`, `channels/canary`), written
 with the executor's App token (`QQ_RELEASE_TOKEN`). gate's `qq-release-refs` rulesets let only
-that identity write them. **TODO(suraj):** the identity does not exist yet. Until it does, the ref
+that identity write them. **TODO(suraj):** the App (`quirq-release-executor`) exists, but release
+does not act as it yet: its token is not set up for these jobs. Until it is, the ref
 write is skipped and the operation records `skipped: no release executor identity`; the pointer
 still moves in `release-state`, which is the record readers use. The pointer remembers that the
-ref was not written (`mirrored: false`), so the first write after the identity exists creates the
+ref was not written (`mirrored: false`), so the first write after release acts as the App creates the
 ref instead of refusing it as moved by someone else.
 
 `release-state` is the trust root the installer reads, and today it is only as safe as push access
@@ -81,9 +83,12 @@ has no other Authorization header, credential helper, URL rewrite or push URL fo
 stays in git config for the rest of the job (as `GITHUB_TOKEN` does today), which is acceptable
 only because writer jobs run `main`'s code; the App token is revoked at job end. The job log says
 which identity pushes: `release-state pushes as <app>[bot]`, or a warning naming
-`github-actions[bot]`. **TODO(suraj):** create the App; limit `release-executor` to `main` (its
-deployment branch policy) *before* uploading the key, since the first writer run creates the
-environment with no limit; then apply the ruleset on `release-state` whose only bypass is the App.
+`github-actions[bot]`. **TODO(suraj):** the App exists; what remains is the gate settings run that
+gives the `qq-release-refs` rulesets the App's bypass (gate #26 and #28, merged but not applied),
+then "command 2", which sets `QQ_RELEASE_CLIENT_ID` here so these jobs act as the App (it stops
+until those rulesets carry the bypass), and then the ruleset on `release-state` whose only bypass
+is the App (open gate PR #27). `release-executor` must allow only `main` (its deployment branch
+policy).
 Until then any workflow here can still push the branch, and the installer should also check that
 `generation` never goes down.
 
@@ -117,8 +122,8 @@ qq channel rollback ...    # the same command in depot's qq (entry point qq.comm
   repo's channels name: commit, digest, generation, operation and time. The installer reads it
   (V0-INS-01). Read it from
   `https://raw.githubusercontent.com/quirq-ai/release/refs/heads/release-state/channels.json`: the
-  `refs/heads/` form means a tag named `release-state` can never be served instead. (The installer's
-  own default still uses the bare name; that change belongs to the installer.)
+  `refs/heads/` form means a tag named `release-state` can never be served instead. The installer's
+  default source uses this form too.
 
 `tools/rollback_drill.py` ships two canaries per repo through the executor, rolls back, and checks
 that the ref, the pointer and `channels.json` all name the previous canary again, within 10
@@ -182,13 +187,18 @@ hold's failure issue by hand with what was wrong with the machine.
 
 GitHub may drop a scheduled run, so `canary-watchdog` checks twice a day that every canary repo has
 a verdict or no-op for today and, if one is missing and no canary is in flight, starts `canary` by hand.
+GitHub often skips scheduled runs on these quiet repos, the watchdog's own included, so a daily
+backstop routine at 07:37 UTC, run outside these repos, dispatches `lkgr` and then `canary-watchdog`.
 
 `tests/canary_demo.py` plays eight days against a fixture service (`tests/fixtures/canary_app`): seven
 ship with no human touch, and a planted bad canary (its `/health` answers 500) is held at
 deploy-probe with the previous canary kept. Presubmit runs it.
 
-Until onboarding lands `infra/repo.toml` in xo-space and innernet (V0-ONB-01) and their post-submit
-builders make an lkgr (xo-space #211, innernet #37), each day's record is a no-op saying why.
+xo-space and innernet have `infra/repo.toml` and an lkgr on `release-state` since 2026-10-04. The
+first canary was started by hand on 2026-10-05 and shipped both repos; `release-state` has a
+record for each day since. Not yet done: 7 daily canaries in a row with no human touch, a held
+canary of a real repo, and a rollback drill on a real repo. website has no canary builder (no
+channels in `repos.toml`), so it is not in the canary.
 
 ## The daily canary report (V0-REL-04)
 
@@ -215,8 +225,9 @@ stable and staged rollout (v2).
 
 ### Open for v1 (non-blocking findings from the v0 audits and reviews)
 
-Waiting on the release executor identity and the `release-state` ruleset (suraj; the executor
-jobs can already push with the App's token):
+Waiting on the release executor identity and the `release-state` ruleset (suraj). The App
+`quirq-release-executor` exists, but until "command 2" runs, the executor jobs push with
+`GITHUB_TOKEN` and release-state records `skipped: no release executor identity`:
 
 - The release chain is a consistency check, not authentication, and `is_held` trusts `state` alone.
 - A rebase after an admin force-push of `release-state` could replay commits the rewind removed; the
