@@ -3,6 +3,58 @@
   "date": "2026-10-07",
   "digest": "sha256:0141a75a1b29b1bcd346d496636dfdd2693b40cb6b4d338b5430645a5eca755e",
   "finished_at": "2026-10-07T07:44:34Z",
+  "later": [
+    {
+      "commit": "48157d5f262dfef6b8dee74b86d6fa733dcc1f49",
+      "date": "2026-10-07",
+      "digest": "sha256:0141a75a1b29b1bcd346d496636dfdd2693b40cb6b4d338b5430645a5eca755e",
+      "finished_at": "2026-10-07T13:26:46Z",
+      "operation": "45caa3b9b1f6e831b3632469520cb17f",
+      "outcome": "shipped",
+      "previous": "c43598ed8c21ef12adc6441e560e8dfbae18f6a7",
+      "reason": "shipped 48157d5f262d sha256:0141a75a1b29b1bcd346d496636dfdd2693b40cb6b4d338b5430645a5eca755e",
+      "repo": "xo-space",
+      "run_url": "https://github.com/quirq-ai/release/actions/runs/37627929963",
+      "schema": "qq-canary-run/1",
+      "stages": [
+        {
+          "detail": "sha256:0141a75a1b29b1bcd346d496636dfdd2693b40cb6b4d338b5430645a5eca755e",
+          "name": "build",
+          "ok": true,
+          "ran": true,
+          "seconds": 22.7
+        },
+        {
+          "detail": "full test suites passed",
+          "name": "verify",
+          "ok": true,
+          "ran": true,
+          "seconds": 79.2
+        },
+        {
+          "detail": "property tests passed with 1000 examples, seed 2722917419",
+          "name": "fuzz-smoke",
+          "ok": true,
+          "ran": true,
+          "seconds": 78.1
+        },
+        {
+          "detail": "1 probe path(s) passed on 1 deployment(s)",
+          "name": "deploy-probe",
+          "ok": true,
+          "ran": true,
+          "seconds": 14.4
+        },
+        {
+          "detail": "channels/canary -> 48157d5f262d (skipped: no release executor identity (QQ_RELEASE_TOKEN unset; TODO(suraj)))",
+          "name": "promote",
+          "ok": true,
+          "seconds": 0
+        }
+      ],
+      "started_at": "2026-10-07T13:26:46Z"
+    }
+  ],
   "operation": "f72db17290ed8665dc58c29a28bfe22a",
   "outcome": "shipped",
   "previous": "14b21a41668bc8124b4cf5cf9cd59fb44dc7d419",
