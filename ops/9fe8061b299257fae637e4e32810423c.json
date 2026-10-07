@@ -1,18 +1,18 @@
 {
   "actor": "https://github.com/quirq-ai/release/actions/runs/37690203701",
-  "applied_at": "",
+  "applied_at": "2026-10-07T21:33:19Z",
   "digest": "",
   "error": "",
   "from_commit": "2d56e47d1c2e82009b4303d3d65030bcf4a6427c",
   "generation": 7,
   "key": "9fe8061b299257fae637e4e32810423c",
   "kind": "advance",
-  "mirror": "",
+  "mirror": "skipped: no release executor identity (QQ_RELEASE_TOKEN unset; TODO(suraj))",
   "reason": "24f943f3af4c is newer than lkgr and green on every post-submit builder",
   "recorded_at": "2026-10-07T21:33:19Z",
   "ref": "lkgr",
   "repo": "xo-space",
   "schema": "qq-operation/1",
-  "state": "recorded",
+  "state": "applied",
   "to_commit": "24f943f3af4c68b6562b4cebf07f72aac9b89e2d"
 }
