@@ -2,11 +2,11 @@
   "repos": {
     "innernet": {
       "canary": {
-        "commit": "8f383a3d6c28f1e4495ff177efe70dca43d17604",
-        "digest": "sha256:3104079de8414872921c453687ba7edb535bd05ecd9f768e9d3f48824dd8c042",
-        "generation": 1,
-        "op": "62c0b7f7a3e5233859f12cacdc1720a6",
-        "updated_at": "2026-10-05T06:59:17Z"
+        "commit": "e48fd9795221130b1b930d8f0374f4e548df34a0",
+        "digest": "sha256:89bddce08874e3fa621f6aaa925451554cbb46a26060e2b19dca1247f9a7db5c",
+        "generation": 2,
+        "op": "2082d4156fdffbf2c548ae0ae1a11028",
+        "updated_at": "2026-10-08T07:44:16Z"
       }
     },
     "xo-space": {
