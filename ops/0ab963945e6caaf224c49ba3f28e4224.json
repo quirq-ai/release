@@ -2,7 +2,7 @@
   "actor": "https://github.com/quirq-ai/release/actions/runs/37939632612",
   "applied_at": "",
   "digest": "",
-  "error": "",
+  "error": "GitHub API POST /repos/quirq-ai/innernet/git/refs: HTTP 500 Internal Server Error",
   "from_commit": "746be31b3ebaf6c81bd8be577b9bc424b355d853",
   "generation": 5,
   "key": "0ab963945e6caaf224c49ba3f28e4224",
@@ -13,6 +13,6 @@
   "ref": "lkgr",
   "repo": "innernet",
   "schema": "qq-operation/1",
-  "state": "recorded",
+  "state": "failed",
   "to_commit": "7afd5031c40bf857c21599018a364035a3bef0a9"
 }
