@@ -1,0 +1,18 @@
+{
+  "actor": "https://github.com/quirq-ai/release/actions/runs/37900256358",
+  "applied_at": "",
+  "digest": "sha256:8f87b8d91f2f2db1e60d4840594a281ba53596b48942ae00b5e54b001d156dbb",
+  "error": "",
+  "from_commit": "e48fd9795221130b1b930d8f0374f4e548df34a0",
+  "generation": 2,
+  "key": "035a78d17b85b4aea2bce190fc8dce5d",
+  "kind": "promote",
+  "mirror": "",
+  "reason": "daily canary 2026-10-09",
+  "recorded_at": "2026-10-09T07:44:47Z",
+  "ref": "channels/canary",
+  "repo": "innernet",
+  "schema": "qq-operation/1",
+  "state": "recorded",
+  "to_commit": "746be31b3ebaf6c81bd8be577b9bc424b355d853"
+}
