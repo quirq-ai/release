@@ -3,6 +3,23 @@
   "date": "2026-10-10",
   "digest": "sha256:8d14b5f92151817becf9a3e357fd872eff5987583ba9d73c810736edcbfa0a07",
   "finished_at": "2026-10-10T07:44:57Z",
+  "later": [
+    {
+      "commit": "cc7d73db61e2eca99ceb798b0c43faf2817a3f2c",
+      "date": "2026-10-10",
+      "digest": "",
+      "finished_at": "2026-10-10T12:31:19Z",
+      "operation": "",
+      "outcome": "noop",
+      "previous": "cc7d73db61e2eca99ceb798b0c43faf2817a3f2c",
+      "reason": "lkgr has not moved since the last canary (cc7d73db61e2)",
+      "repo": "xo-space",
+      "run_url": "https://github.com/quirq-ai/release/actions/runs/38052221802",
+      "schema": "qq-canary-run/1",
+      "stages": [],
+      "started_at": "2026-10-10T12:31:19Z"
+    }
+  ],
   "operation": "5fe23b1480cbdc43dd56eef8cf249d24",
   "outcome": "shipped",
   "previous": "e7092bac888cef6c1196dbb0f8043daa3ee19ce0",
