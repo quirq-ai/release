@@ -1,0 +1,18 @@
+{
+  "actor": "https://github.com/quirq-ai/release/actions/runs/38914893094",
+  "applied_at": "",
+  "digest": "",
+  "error": "",
+  "from_commit": "3bb8687307144ab604723e7c13f49753b22dc0e0",
+  "generation": 12,
+  "key": "a9d265b8b94d319e48d0c692fefc3735",
+  "kind": "advance",
+  "mirror": "",
+  "reason": "577850bfe936 is newer than lkgr and green on every post-submit builder",
+  "recorded_at": "2026-10-16T14:20:27Z",
+  "ref": "lkgr",
+  "repo": "xo-space",
+  "schema": "qq-operation/1",
+  "state": "recorded",
+  "to_commit": "577850bfe9363b04e17c012ebe2c014df9490bc1"
+}
