@@ -1,0 +1,50 @@
+{
+  "commit": "577850bfe9363b04e17c012ebe2c014df9490bc1",
+  "date": "2026-10-17",
+  "digest": "sha256:8bed133640035f658a5b260a1dfbf529d0c1b07765597b194f582d56643df756",
+  "finished_at": "2026-10-17T07:47:02Z",
+  "operation": "f1dc9733dfcc84080985e254a102ea2d",
+  "outcome": "shipped",
+  "previous": "3bb8687307144ab604723e7c13f49753b22dc0e0",
+  "reason": "shipped 577850bfe936 sha256:8bed133640035f658a5b260a1dfbf529d0c1b07765597b194f582d56643df756",
+  "repo": "xo-space",
+  "run_url": "https://github.com/quirq-ai/release/actions/runs/39014566646",
+  "schema": "qq-canary-run/1",
+  "stages": [
+    {
+      "detail": "sha256:8bed133640035f658a5b260a1dfbf529d0c1b07765597b194f582d56643df756",
+      "name": "build",
+      "ok": true,
+      "ran": true,
+      "seconds": 23.4
+    },
+    {
+      "detail": "full test suites passed",
+      "name": "verify",
+      "ok": true,
+      "ran": true,
+      "seconds": 112.0
+    },
+    {
+      "detail": "property tests passed with 1000 examples, seed 2054632061",
+      "name": "fuzz-smoke",
+      "ok": true,
+      "ran": true,
+      "seconds": 108.2
+    },
+    {
+      "detail": "1 probe path(s) passed on 1 deployment(s)",
+      "name": "deploy-probe",
+      "ok": true,
+      "ran": true,
+      "seconds": 18.4
+    },
+    {
+      "detail": "channels/canary -> 577850bfe936 (pushed)",
+      "name": "promote",
+      "ok": true,
+      "seconds": 0
+    }
+  ],
+  "started_at": "2026-10-17T07:47:02Z"
+}
