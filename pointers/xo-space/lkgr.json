@@ -1,8 +1,15 @@
 {
-  "commit": "577850bfe9363b04e17c012ebe2c014df9490bc1",
+  "commit": "0b8b860a9bfc4be2892754b8634acd6e8da3d7fa",
   "digest": "",
-  "generation": 13,
+  "generation": 14,
   "history": [
+    {
+      "commit": "577850bfe9363b04e17c012ebe2c014df9490bc1",
+      "digest": "",
+      "generation": 13,
+      "op": "a9d265b8b94d319e48d0c692fefc3735",
+      "updated_at": "2026-10-16T14:20:27Z"
+    },
     {
       "commit": "3bb8687307144ab604723e7c13f49753b22dc0e0",
       "digest": "",
@@ -89,11 +96,11 @@
     }
   ],
   "mirrored": true,
-  "op": "a9d265b8b94d319e48d0c692fefc3735",
-  "pending": "b5286f75cb1516f366ca4bedd014fd59",
+  "op": "b5286f75cb1516f366ca4bedd014fd59",
+  "pending": "",
   "ref": "lkgr",
   "repo": "xo-space",
   "rolled_back": [],
   "schema": "qq-pointer/1",
-  "updated_at": "2026-10-16T14:20:27Z"
+  "updated_at": "2026-10-27T15:26:10Z"
 }
