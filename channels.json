@@ -11,11 +11,11 @@
     },
     "xo-space": {
       "canary": {
-        "commit": "0b8b860a9bfc4be2892754b8634acd6e8da3d7fa",
-        "digest": "sha256:b2b9d62dafb53602d6ee8166afbe5c271bb9241754126fe967c24a41364946a9",
-        "generation": 9,
-        "op": "52b242ab91c12d2b4cdedd6f9e3ccd5f",
-        "updated_at": "2026-10-28T07:56:10Z"
+        "commit": "e1ecfc57bee3216dd32b4fc09262fd0630ad60b3",
+        "digest": "sha256:d3ff0c87d2c9f84d3239a9e510d2fcb1f3c48ce716e6b44264aaed06dbc46d3e",
+        "generation": 10,
+        "op": "3fcdcef78601838da4e51f64916bdc66",
+        "updated_at": "2026-11-03T08:01:15Z"
       }
     }
   },

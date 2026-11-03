@@ -1,8 +1,15 @@
 {
-  "commit": "0b8b860a9bfc4be2892754b8634acd6e8da3d7fa",
-  "digest": "sha256:b2b9d62dafb53602d6ee8166afbe5c271bb9241754126fe967c24a41364946a9",
-  "generation": 9,
+  "commit": "e1ecfc57bee3216dd32b4fc09262fd0630ad60b3",
+  "digest": "sha256:d3ff0c87d2c9f84d3239a9e510d2fcb1f3c48ce716e6b44264aaed06dbc46d3e",
+  "generation": 10,
   "history": [
+    {
+      "commit": "0b8b860a9bfc4be2892754b8634acd6e8da3d7fa",
+      "digest": "sha256:b2b9d62dafb53602d6ee8166afbe5c271bb9241754126fe967c24a41364946a9",
+      "generation": 9,
+      "op": "52b242ab91c12d2b4cdedd6f9e3ccd5f",
+      "updated_at": "2026-10-28T07:56:10Z"
+    },
     {
       "commit": "577850bfe9363b04e17c012ebe2c014df9490bc1",
       "digest": "sha256:8bed133640035f658a5b260a1dfbf529d0c1b07765597b194f582d56643df756",
@@ -61,11 +68,11 @@
     }
   ],
   "mirrored": true,
-  "op": "52b242ab91c12d2b4cdedd6f9e3ccd5f",
-  "pending": "3fcdcef78601838da4e51f64916bdc66",
+  "op": "3fcdcef78601838da4e51f64916bdc66",
+  "pending": "",
   "ref": "channels/canary",
   "repo": "xo-space",
   "rolled_back": [],
   "schema": "qq-pointer/1",
-  "updated_at": "2026-10-28T07:56:10Z"
+  "updated_at": "2026-11-03T08:01:15Z"
 }
