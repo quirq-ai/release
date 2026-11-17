@@ -1,0 +1,10 @@
+{
+  "commit": "9bc003e27b15325a308a8b9fd15ec6732a4c73f0",
+  "date": "2026-11-17",
+  "digest": "sha256:39a9bc1ee341fa273c5e3e031d7eade48019dca05c7a0a7a07ec65b51fb15be4",
+  "releases": [],
+  "repo": "xo-space",
+  "run_url": "https://github.com/quirq-ai/release/actions/runs/44040371051",
+  "stage": "verify",
+  "state": "held"
+}

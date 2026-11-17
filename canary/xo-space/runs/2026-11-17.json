@@ -1,0 +1,30 @@
+{
+  "commit": "9bc003e27b15325a308a8b9fd15ec6732a4c73f0",
+  "date": "2026-11-17",
+  "digest": "sha256:39a9bc1ee341fa273c5e3e031d7eade48019dca05c7a0a7a07ec65b51fb15be4",
+  "finished_at": "2026-11-17T07:53:47Z",
+  "operation": "",
+  "outcome": "held",
+  "previous": "b7124b07dc309174c9239389559ae25af49f0596",
+  "reason": "held at verify: tests failed:",
+  "repo": "xo-space",
+  "run_url": "https://github.com/quirq-ai/release/actions/runs/44040371051",
+  "schema": "qq-canary-run/1",
+  "stages": [
+    {
+      "detail": "sha256:39a9bc1ee341fa273c5e3e031d7eade48019dca05c7a0a7a07ec65b51fb15be4",
+      "name": "build",
+      "ok": true,
+      "ran": true,
+      "seconds": 26.7
+    },
+    {
+      "detail": "tests failed:\nPASS plugin-bundles fetch:toolchain-check (0.0s)\nPASS plugin-bundles fetch:venv (0.1s)\nPASS plugin-bundles fetch:venv-check (0.0s)\nPASS plugin-bundles fetch:install (0.5s)\nPASS space-ui-syntax fetch:toolchain-check (0.0s)\nPASS space-ui-syntax fetch:venv (0.1s)\nPASS space-ui-syntax fetch:venv-check (0.0s)\nPASS space-ui-syntax fetch:install (0.5s)\nPASS server build:compileall (0.1s)\n-    tests build: missing (declared)\n-    route-parity build: missing (declared)\n-    plugin-bundles build: missing (declared)\n-    space-ui-syntax build: missing (declared)\n-    server test: missing (declared)\nFAIL tests test:pytest (744.0s)  log: /home/runner/work/release/release/.qq/canary/xo-space/verify/logs/tests.test.pytest.log",
+      "name": "verify",
+      "ok": false,
+      "ran": true,
+      "seconds": 749.4
+    }
+  ],
+  "started_at": "2026-11-17T07:53:47Z"
+}
