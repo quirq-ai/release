@@ -1,0 +1,15 @@
+{
+  "commit": "9bc003e27b15325a308a8b9fd15ec6732a4c73f0",
+  "date": "2026-11-21",
+  "digest": "",
+  "finished_at": "2026-11-21T07:40:34Z",
+  "operation": "",
+  "outcome": "noop",
+  "previous": "b7124b07dc309174c9239389559ae25af49f0596",
+  "reason": "lkgr names 9bc003e27b15, which an earlier canary held; waiting for lkgr to move",
+  "repo": "xo-space",
+  "run_url": "https://github.com/quirq-ai/release/actions/runs/44881259534",
+  "schema": "qq-canary-run/1",
+  "stages": [],
+  "started_at": "2026-11-21T07:40:34Z"
+}
