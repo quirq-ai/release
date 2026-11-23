@@ -2,14 +2,31 @@
   "commit": "7afd5031c40bf857c21599018a364035a3bef0a9",
   "date": "2026-11-23",
   "digest": "",
-  "finished_at": "2026-11-23T07:40:32Z",
+  "earlier": [
+    {
+      "commit": "7afd5031c40bf857c21599018a364035a3bef0a9",
+      "date": "2026-11-23",
+      "digest": "",
+      "finished_at": "2026-11-23T07:40:32Z",
+      "operation": "",
+      "outcome": "noop",
+      "previous": "7afd5031c40bf857c21599018a364035a3bef0a9",
+      "reason": "lkgr has not moved since the last canary (7afd5031c40b)",
+      "repo": "innernet",
+      "run_url": "https://github.com/quirq-ai/release/actions/runs/45132738372",
+      "schema": "qq-canary-run/1",
+      "stages": [],
+      "started_at": "2026-11-23T07:40:32Z"
+    }
+  ],
+  "finished_at": "2026-11-23T18:06:44Z",
   "operation": "",
   "outcome": "noop",
   "previous": "7afd5031c40bf857c21599018a364035a3bef0a9",
   "reason": "lkgr has not moved since the last canary (7afd5031c40b)",
   "repo": "innernet",
-  "run_url": "https://github.com/quirq-ai/release/actions/runs/45132738372",
+  "run_url": "https://github.com/quirq-ai/release/actions/runs/45234673272",
   "schema": "qq-canary-run/1",
   "stages": [],
-  "started_at": "2026-11-23T07:40:32Z"
+  "started_at": "2026-11-23T18:06:44Z"
 }
